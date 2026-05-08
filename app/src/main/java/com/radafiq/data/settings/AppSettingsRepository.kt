@@ -23,6 +23,7 @@ enum class AppThemeMode(
 data class AppSettingsState(
     val themeMode: AppThemeMode = AppThemeMode.DARK,
     val selectedAccountIds: Set<String> = IndianAccountCatalog.defaultSelectedAccountIds(),
+    val knownAccountIds: Set<String> = IndianAccountCatalog.defaultSelectedAccountIds(),
     val lastDriveBackupTime: String? = null,
     val lastDriveRestoreTime: String? = null
 )
@@ -75,7 +76,8 @@ class AppSettingsRepository(context: Context) {
     fun exportSettings(): Map<String, Any> {
         return mutableMapOf<String, Any>(
             KEY_THEME_MODE to _settings.value.themeMode.name,
-            KEY_SELECTED_ACCOUNT_IDS to _settings.value.selectedAccountIds.toList()
+            KEY_SELECTED_ACCOUNT_IDS to _settings.value.selectedAccountIds.toList(),
+            KEY_KNOWN_ACCOUNT_IDS to _settings.value.knownAccountIds.toList()
             // Drive timestamps are device-local and intentionally excluded from backup
         )
     }
@@ -87,20 +89,32 @@ class AppSettingsRepository(context: Context) {
             is List<*> -> rawIds.filterIsInstance<String>().toSet()
             else -> emptySet()
         }
+        val knownAccountIds = when (val rawIds = data[KEY_KNOWN_ACCOUNT_IDS]) {
+            is List<*> -> rawIds.filterIsInstance<String>().toSet()
+            else -> emptySet()
+        }
 
         // Preserve existing local timestamps — they are not part of the backup payload
-        persist(
-            AppSettingsState(
-                themeMode = themeMode,
-                selectedAccountIds = if (selectedAccountIds.isEmpty()) {
-                    IndianAccountCatalog.defaultSelectedAccountIds()
-                } else {
-                    IndianAccountCatalog.sanitizeSelectedAccountIds(selectedAccountIds)
-                },
-                lastDriveBackupTime = _settings.value.lastDriveBackupTime,
-                lastDriveRestoreTime = _settings.value.lastDriveRestoreTime
+        if (selectedAccountIds.isEmpty()) {
+            persist(
+                AppSettingsState(
+                    themeMode = themeMode,
+                    lastDriveBackupTime = _settings.value.lastDriveBackupTime,
+                    lastDriveRestoreTime = _settings.value.lastDriveRestoreTime
+                )
             )
-        )
+        } else {
+            val merged = IndianAccountCatalog.mergeNewAccountIds(selectedAccountIds, knownAccountIds)
+            persist(
+                AppSettingsState(
+                    themeMode = themeMode,
+                    selectedAccountIds = merged.selectedAccountIds,
+                    knownAccountIds = merged.knownAccountIds,
+                    lastDriveBackupTime = _settings.value.lastDriveBackupTime,
+                    lastDriveRestoreTime = _settings.value.lastDriveRestoreTime
+                )
+            )
+        }
     }
 
     private fun userSuffix(): String {
@@ -115,15 +129,24 @@ class AppSettingsRepository(context: Context) {
         val storedAccountIds = preferences.getStringSet(KEY_SELECTED_ACCOUNT_IDS, null)
             ?.toSet()
             .orEmpty()
+        val storedKnownIds = preferences.getStringSet(KEY_KNOWN_ACCOUNT_IDS, null)
+            ?.toSet()
+            .orEmpty()
         val suffix = userSuffix()
 
+        if (storedAccountIds.isEmpty()) {
+            return AppSettingsState(
+                themeMode = storedThemeMode,
+                lastDriveBackupTime = preferences.getString(KEY_LAST_DRIVE_BACKUP_TIME + suffix, null),
+                lastDriveRestoreTime = preferences.getString(KEY_LAST_DRIVE_RESTORE_TIME + suffix, null)
+            )
+        }
+
+        val merged = IndianAccountCatalog.mergeNewAccountIds(storedAccountIds, storedKnownIds)
         return AppSettingsState(
             themeMode = storedThemeMode,
-            selectedAccountIds = if (storedAccountIds.isEmpty()) {
-                IndianAccountCatalog.defaultSelectedAccountIds()
-            } else {
-                IndianAccountCatalog.sanitizeSelectedAccountIds(storedAccountIds)
-            },
+            selectedAccountIds = merged.selectedAccountIds,
+            knownAccountIds = merged.knownAccountIds,
             lastDriveBackupTime = preferences.getString(KEY_LAST_DRIVE_BACKUP_TIME + suffix, null),
             lastDriveRestoreTime = preferences.getString(KEY_LAST_DRIVE_RESTORE_TIME + suffix, null)
         )
@@ -134,6 +157,7 @@ class AppSettingsRepository(context: Context) {
         preferences.edit().apply {
             putString(KEY_THEME_MODE, settings.themeMode.name)
             putStringSet(KEY_SELECTED_ACCOUNT_IDS, settings.selectedAccountIds.toSet())
+            putStringSet(KEY_KNOWN_ACCOUNT_IDS, settings.knownAccountIds.toSet())
             putString(KEY_LAST_DRIVE_BACKUP_TIME + suffix, settings.lastDriveBackupTime)
             putString(KEY_LAST_DRIVE_RESTORE_TIME + suffix, settings.lastDriveRestoreTime)
             apply()
@@ -145,6 +169,7 @@ class AppSettingsRepository(context: Context) {
         const val PREFERENCES_NAME = "radafiq_settings"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_SELECTED_ACCOUNT_IDS = "selected_account_ids"
+        const val KEY_KNOWN_ACCOUNT_IDS = "known_account_ids"
         const val KEY_LAST_DRIVE_BACKUP_TIME = "last_drive_backup_time"
         const val KEY_LAST_DRIVE_RESTORE_TIME = "last_drive_restore_time"
     }

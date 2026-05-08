@@ -43,16 +43,26 @@ const SETTINGS_KEY = 'radafiq_settings';
 function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { themeMode: 'DARK', selectedAccountIds: defaultSelectedAccountIds(), lastDriveBackupTime: null, lastDriveRestoreTime: null };
+    if (!raw) return { themeMode: 'DARK', selectedAccountIds: defaultSelectedAccountIds(), knownAccountIds: defaultSelectedAccountIds(), lastDriveBackupTime: null, lastDriveRestoreTime: null };
     const parsed = JSON.parse(raw);
+    const saved = new Set<string>(parsed.selectedAccountIds ?? []);
+    const savedKnown = new Set<string>(parsed.knownAccountIds ?? []);
+    // Use savedKnown as baseline; for backward compat (no knownAccountIds), fall back to saved selections
+    const baselineKnown = savedKnown.size > 0 ? savedKnown : new Set(saved);
+    // Only add accounts that are genuinely new (didn't exist when user last saved settings)
+    const allDefaults = defaultSelectedAccountIds();
+    const genuinelyNew = new Set([...allDefaults].filter(id => !baselineKnown.has(id)));
+    const merged = new Set([...saved, ...genuinelyNew]);
+    // Update knownAccountIds to current full set so future merges are correct
     return {
       themeMode: parsed.themeMode ?? 'DARK',
-      selectedAccountIds: new Set(parsed.selectedAccountIds ?? Array.from(defaultSelectedAccountIds())),
+      selectedAccountIds: merged,
+      knownAccountIds: allDefaults,
       lastDriveBackupTime: parsed.lastDriveBackupTime ?? null,
       lastDriveRestoreTime: parsed.lastDriveRestoreTime ?? null,
     };
   } catch {
-    return { themeMode: 'DARK', selectedAccountIds: defaultSelectedAccountIds(), lastDriveBackupTime: null, lastDriveRestoreTime: null };
+    return { themeMode: 'DARK', selectedAccountIds: defaultSelectedAccountIds(), knownAccountIds: defaultSelectedAccountIds(), lastDriveBackupTime: null, lastDriveRestoreTime: null };
   }
 }
 
@@ -60,6 +70,7 @@ function saveSettings(settings: AppSettings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify({
     themeMode: settings.themeMode,
     selectedAccountIds: Array.from(settings.selectedAccountIds),
+    knownAccountIds: Array.from(settings.knownAccountIds),
     lastDriveBackupTime: settings.lastDriveBackupTime,
     lastDriveRestoreTime: settings.lastDriveRestoreTime,
   }));
@@ -843,6 +854,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         app: {
           themeMode: settings.themeMode,
           selectedAccountIds: Array.from(settings.selectedAccountIds),
+          knownAccountIds: Array.from(settings.knownAccountIds),
         },
       });
       const json = backupToJson(payload);
@@ -868,12 +880,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // BUG-17 fix: merge both settings updates into a single call
       updateSettings(s => {
         const appSettings = payload.settings?.app as Record<string, unknown> | undefined;
+        const restoredIds = appSettings?.selectedAccountIds
+          ? new Set(appSettings.selectedAccountIds as string[])
+          : null;
+        const restoredKnown = appSettings?.knownAccountIds
+          ? new Set(appSettings.knownAccountIds as string[])
+          : null;
         return {
           ...s,
           themeMode: (appSettings?.themeMode as 'LIGHT' | 'DARK') ?? s.themeMode,
-          selectedAccountIds: appSettings?.selectedAccountIds
-            ? new Set(appSettings.selectedAccountIds as string[])
-            : s.selectedAccountIds,
+          selectedAccountIds: restoredIds ?? s.selectedAccountIds,
+          knownAccountIds: restoredKnown ?? s.knownAccountIds,
           lastDriveRestoreTime: currentTimestampLabel(),
         };
       });

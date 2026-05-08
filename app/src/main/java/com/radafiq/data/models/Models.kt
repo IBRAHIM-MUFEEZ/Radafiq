@@ -66,7 +66,8 @@ object IndianAccountCatalog {
         AccountOption("card_onecard", "OneCard", AccountKind.CREDIT_CARD),
         AccountOption("card_amazon_icici", "Amazon Pay ICICI Card", AccountKind.CREDIT_CARD),
         AccountOption("card_flipkart_axis", "Flipkart Axis Bank Credit Card", AccountKind.CREDIT_CARD),
-        AccountOption("card_jupiter", "Jupiter Credit Card", AccountKind.CREDIT_CARD)
+        AccountOption("card_jupiter", "Jupiter Credit Card", AccountKind.CREDIT_CARD),
+        AccountOption("card_irctc_hdfc", "IRCTC HDFC Credit Card", AccountKind.CREDIT_CARD)
     )
 
     val all = bankAccounts + creditCards
@@ -108,7 +109,32 @@ object IndianAccountCatalog {
             filteredIds
         }
     }
+
+    /** Like [sanitizeSelectedAccountIds] but also merges in any newly added account IDs
+     *  (e.g. new credit cards) that weren't in the saved set. Call this when loading
+     *  persisted settings so new catalog entries appear automatically.
+     *  @param savedKnownIds the set of account IDs that existed at the time of the
+     *         last save. Only accounts NOT in this set are auto-merged.
+     *         Empty for backward compat — fallback uses [selectedAccountIds]. */
+    fun mergeNewAccountIds(
+        selectedAccountIds: Set<String>,
+        savedKnownIds: Set<String> = emptySet()
+    ): MergedResult {
+        val knownIds = all.map { it.id }.toSet()
+        val filtered = selectedAccountIds.filterTo(mutableSetOf()) { it in knownIds }
+        if (filtered.isEmpty()) return MergedResult(defaultSelectedAccountIds(), knownIds)
+        // Backward compat: if no savedKnownIds, use filtered (saved selections) as baseline
+        val baseline = if (savedKnownIds.isEmpty()) filtered.toSet() else savedKnownIds
+        val genuinelyNew = knownIds - baseline
+        filtered.addAll(genuinelyNew)
+        return MergedResult(filtered, knownIds)
+    }
 }
+
+data class MergedResult(
+    val selectedAccountIds: Set<String>,
+    val knownAccountIds: Set<String>
+)
 
 data class CardSummary(
     val id: String,

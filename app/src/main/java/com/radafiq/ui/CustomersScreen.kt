@@ -2050,6 +2050,18 @@ fun TransactionEditorDialog(
     val draft by vm.draftTransaction.collectAsState()
     val hasDraft = transaction == null && draft.customerId == customer.id && !draft.isEmpty
 
+    // Compute "frequently used" account IDs from ALL customers' transaction history
+    val allCustomers by vm.customers.collectAsState()
+    val frequentAccountIds = remember(allCustomers) {
+        val freq = mutableMapOf<String, Int>()
+        for (c in allCustomers) {
+            for (t in c.transactions) {
+                freq[t.accountId] = (freq[t.accountId] ?: 0) + 1
+            }
+        }
+        freq.filter { it.value > 0 }.keys
+    }
+
     var transactionName by remember(transaction?.id) {
         mutableStateOf(if (hasDraft) draft.transactionName else transaction?.name.orEmpty())
     }
@@ -2145,11 +2157,12 @@ fun TransactionEditorDialog(
     val firstOverride = emiFirstMonthOverride.toDoubleOrNull()
         ?.takeIf { it > 0.0 }
 
-    val accountOptions = remember(selectedKind, selectedAccountIds, transaction?.accountId) {
+    val accountOptions = remember(selectedKind, selectedAccountIds, transaction?.accountId, customer.transactions) {
         selectedAccountOptions(
             accountKind = selectedKind,
             selectedAccountIds = selectedAccountIds,
-            pinnedAccountId = transaction?.accountId
+            pinnedAccountId = transaction?.accountId,
+            transactions = customer.transactions
         )
     }
     val selectedAccount = accountOptions.firstOrNull { it.id == selectedAccountId }
@@ -2264,6 +2277,8 @@ fun TransactionEditorDialog(
                             index = index,
                             entry = entry,
                             selectedAccountIds = selectedAccountIds,
+                            transactions = customer.transactions,
+                            frequentAccountIds = frequentAccountIds,
                             onEntryChange = { updated ->
                                 splitEntries = splitEntries.toMutableList().also { it[index] = updated }
                             },
@@ -2327,7 +2342,8 @@ fun TransactionEditorDialog(
                                     selectedOption = account,
                                     options = accountOptions,
                                     onOptionSelected = { selectedAccountId = it.id },
-                                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                                    frequentAccountIds = frequentAccountIds
                                 )
                             }
                         }
@@ -2373,6 +2389,8 @@ fun TransactionEditorDialog(
                                 index = index,
                                 entry = entry,
                                 selectedAccountIds = selectedAccountIds,
+                                transactions = customer.transactions,
+                                frequentAccountIds = frequentAccountIds,
                                 onEntryChange = { updated ->
                                     emiSplitEntries = emiSplitEntries.toMutableList().also { it[index] = updated }
                                 },
@@ -2706,7 +2724,8 @@ private fun selectedAccountKinds(
 private fun selectedAccountOptions(
     accountKind: AccountKind,
     selectedAccountIds: Set<String>,
-    pinnedAccountId: String?
+    pinnedAccountId: String? = null,
+    transactions: List<CustomerTransaction>? = null
 ): List<AccountOption> {
     val options = IndianAccountCatalog.optionsFor(accountKind, selectedAccountIds).toMutableList()
     val pinnedOption = pinnedAccountId?.let(IndianAccountCatalog::optionById)
@@ -2717,6 +2736,14 @@ private fun selectedAccountOptions(
         options.none { it.id == pinnedOption.id }
     ) {
         options.add(pinnedOption)
+    }
+
+    if (transactions != null) {
+        val freq = transactions
+            .filter { it.accountKind == accountKind }
+            .groupingBy { it.accountId }
+            .eachCount()
+        options.sortByDescending { freq[it.id] ?: 0 }
     }
 
     return options
@@ -3141,6 +3168,20 @@ private fun SplitTransactionRow(
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f))
                             ) {
                                 Text("+ Partial", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                        // Edit button (opens the transaction editor for this split entry)
+                        if (onEditSplit != null) {
+                            OutlinedButton(
+                                onClick = { onEditSplit(split) },
+                                modifier = Modifier.height(28.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                            ) {
+                                Text("Edit", style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
@@ -3590,14 +3631,20 @@ private fun SplitEntryRow(
     index: Int,
     entry: SplitEntry,
     selectedAccountIds: Set<String>,
+    transactions: List<CustomerTransaction> = emptyList(),
+    frequentAccountIds: Set<String> = emptySet(),
     onEntryChange: (SplitEntry) -> Unit,
     onRemove: (() -> Unit)?
 ) {
     val availableKinds = remember(selectedAccountIds) {
         selectedAccountKinds(selectedAccountIds, null)
     }
-    val accountOptions = remember(entry.accountKind, selectedAccountIds) {
-        selectedAccountOptions(entry.accountKind, selectedAccountIds, entry.accountId.ifBlank { null })
+    val accountOptions = remember(entry.accountKind, selectedAccountIds, transactions) {
+        selectedAccountOptions(
+            entry.accountKind, selectedAccountIds,
+            pinnedAccountId = entry.accountId.ifBlank { null },
+            transactions = transactions
+        )
     }
     val selectedAccount = accountOptions.firstOrNull { it.id == entry.accountId }
         ?: accountOptions.firstOrNull()
@@ -3671,7 +3718,8 @@ private fun SplitEntryRow(
                     onOptionSelected = { opt ->
                         onEntryChange(entry.copy(accountId = opt.id, accountName = opt.name))
                     },
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    frequentAccountIds = frequentAccountIds
                 )
             }
         }

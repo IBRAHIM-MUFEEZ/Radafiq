@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, Check, PiggyBank, ChevronDown, ChevronUp, Download } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatMoney, formatDate, todayString, evaluateExpression } from '../utils/format';
-import { CustomerTransaction, isVisibleInTransactions, isEmi, isSplit, isEmiOverdue, daysUntilDue, AccountKind, SplitEntry, ACCOUNT_KIND_LABELS, getAccountOptions, ALL_ACCOUNTS } from '../types/models';
+import { CustomerTransaction, isVisibleInTransactions, isEmi, isSplit, isEmiOverdue, daysUntilDue, AccountKind, AccountOption, SplitEntry, ACCOUNT_KIND_LABELS, getAccountOptions, ALL_ACCOUNTS } from '../types/models';
 import { generateAndDownloadStatement } from '../utils/statementGenerator';
 
 type TxnFilter = 'ALL' | 'bank_account' | 'credit_card' | 'person';
@@ -284,6 +284,14 @@ function SplitGroupRow({
                     )}
                     <button
                       className="btn btn-ghost btn-sm"
+                      style={{ padding: '2px 6px', fontSize: '0.75rem' }}
+                      onClick={e => { e.stopPropagation(); onEdit(split); }}
+                      title="Edit"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm"
                       style={{ padding: '2px 6px', fontSize: '0.75rem', color: 'var(--red)' }}
                       onClick={e => { e.stopPropagation(); onDelete(split.id); }}
                       title="Delete split entry"
@@ -445,6 +453,36 @@ export default function CustomerDetail() {
         : { kind: 'split' as const, groupId: group.groupId, splits: group.splits, runningBalance: balanceAtThisRow };
     });
   }, [visibleTxns]);
+
+  // Frequency of each account across ALL customers — used to show "Frequently Used" at the top
+  const allAccountFreq = useMemo(() => {
+    const freq = new Map<string, number>();
+    for (const c of customers) {
+      for (const t of c.transactions) {
+        freq.set(t.accountId, (freq.get(t.accountId) || 0) + 1);
+      }
+    }
+    return freq;
+  }, [customers]);
+
+  function groupedSelectOptions(options: AccountOption[], freq: Map<string, number>) {
+    const frequent = options
+      .filter(o => (freq.get(o.id) || 0) > 0)
+      .sort((a, b) => (freq.get(b.id) || 0) - (freq.get(a.id) || 0));
+    const other = options.filter(o => (freq.get(o.id) || 0) === 0);
+    return (
+      <>
+        {frequent.length > 0 && (
+          <optgroup label="Frequently Used">
+            {frequent.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </optgroup>
+        )}
+        <optgroup label={frequent.length > 0 ? 'Other Accounts' : 'All Accounts'}>
+          {other.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </optgroup>
+      </>
+    );
+  }
 
   const accountOptions = useMemo(() =>
     getAccountOptions(form.accountKind, settings.selectedAccountIds),
@@ -1032,9 +1070,7 @@ export default function CustomerDetail() {
                           }}
                         >
                           <option value="">Select account</option>
-                          {getAccountOptions(split.accountKind, settings.selectedAccountIds).map(a => (
-                            <option key={a.id} value={a.id}>{a.name}</option>
-                          ))}
+                          {groupedSelectOptions(getAccountOptions(split.accountKind, settings.selectedAccountIds), allAccountFreq)}
                         </select>
                       )}
                     </div>
@@ -1078,7 +1114,7 @@ export default function CustomerDetail() {
                               }}
                             >
                               <option value="">Select account</option>
-                              {accountOptions.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                              {groupedSelectOptions(accountOptions, allAccountFreq)}
                             </select>
                           </div>
                         )}
@@ -1158,9 +1194,7 @@ export default function CustomerDetail() {
                                 }}
                               >
                                 <option value="">Select account</option>
-                                {getAccountOptions(split.accountKind, settings.selectedAccountIds).map(a => (
-                                  <option key={a.id} value={a.id}>{a.name}</option>
-                                ))}
+                                {groupedSelectOptions(getAccountOptions(split.accountKind, settings.selectedAccountIds), allAccountFreq)}
                               </select>
                             )}
                           </div>

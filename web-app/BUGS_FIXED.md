@@ -92,6 +92,10 @@
 **File:** `src/pages/ProfileSetup.tsx`  
 **Fix:** Added `|| !user` to the disabled condition.
 
+### ✅ BUG-66 — mergeNewAccountIds re-enables all accounts every page load
+**Files:** `src/context/AppContext.tsx`, `src/types/models.ts` (web) / `Models.kt`, `AppSettingsRepository.kt` (Android)  
+**Fix:** Persist `knownAccountIds` alongside `selectedAccountIds`. On load, only auto-merge accounts that are genuinely new (present in catalog but absent from `knownAccountIds`). Backward compatible — if `knownAccountIds` is missing from saved data, falls back to using `selectedAccountIds` as the baseline so no de-selections are lost after update.
+
 ### ✅ BUG-19 — permanentlyDeleteCustomer deduplication broken
 **File:** `src/services/firebaseRepository.ts`  
 **Fix:** Changed `if (deleted.add(d.id))` to `if (!deleted.has(d.id)) { deleted.add(d.id); ... }`. `Set.add()` always returns the Set (truthy), not a boolean.
@@ -263,9 +267,9 @@
 
 | Status | Count |
 |--------|-------|
-| ✅ Fixed | 20 |
+| ✅ Fixed | 21 |
 | ⚠️ Documented (requires architectural changes) | 45 |
-| **Total bugs found** | **65** |
+| **Total bugs found** | **66** |
 
 ### Remaining High-Priority Items
 

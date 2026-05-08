@@ -70,6 +70,7 @@ export const CREDIT_CARDS: AccountOption[] = [
   { id: 'card_amazon_icici', name: 'Amazon Pay ICICI Card', accountKind: 'credit_card' },
   { id: 'card_flipkart_axis', name: 'Flipkart Axis Bank Credit Card', accountKind: 'credit_card' },
   { id: 'card_jupiter', name: 'Jupiter Credit Card', accountKind: 'credit_card' },
+  { id: 'card_irctc_hdfc', name: 'IRCTC HDFC Credit Card', accountKind: 'credit_card' },
 ];
 
 export const ALL_ACCOUNTS: AccountOption[] = [...BANK_ACCOUNTS, ...CREDIT_CARDS];
@@ -275,6 +276,7 @@ export type AppThemeMode = 'LIGHT' | 'DARK';
 export interface AppSettings {
   themeMode: AppThemeMode;
   selectedAccountIds: Set<string>;
+  knownAccountIds: Set<string>;
   lastDriveBackupTime: string | null;
   lastDriveRestoreTime: string | null;
 }
