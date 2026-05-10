@@ -24,7 +24,12 @@ Env vars: copy `.env.example` → `.env.local` with Firebase config. Already don
 
 ### Android app (`app/`)
 
-Open in Android Studio → Gradle sync → run on API 24+ device/emulator. No CLI build command tested (no gradlew wrapper was confirmed working — use Studio).
+```bash
+./gradlew assembleDebug  # debug APK
+./gradlew assembleRelease # release APK (requires signing env vars)
+```
+
+Open in Android Studio → Gradle sync → run on API 24+ device/emulator.
 
 ## Build & config notes
 
@@ -57,6 +62,6 @@ users/{uid}/profile/main, customers/, accounts/, transactions/, payments/, savin
 - Web app stores passcode hash + settings in `localStorage` (no secure store on web) — intentional
 - `BUGS_FIXED.md` in `web-app/` catalogs 65 bugs (20 fixed, 45 documented but unfixed) — check before editing to avoid reintroducing known issues
 - No linter, formatter, or test infrastructure is configured for either app
-- `CredFlowApp/` and `passkey-demo/` are separate/legacy directories with no `.gitignore` at their level — avoid editing them
+- `CredFlowApp/`, `passkey-demo/`, `.features/`, `figma-plugin/`, and `build/` were removed as unused (May 2026)
 - Firebase config files (`google-services.json`, `.env.local`, `src/firebase.ts`) are in `.gitignore` but exist on disk
 - Web app uses `Set` for `selectedAccountIds` in settings (serialized as `Array`) — be careful when comparing/modifying

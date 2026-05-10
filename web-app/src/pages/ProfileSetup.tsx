@@ -85,7 +85,7 @@ export default function ProfileSetup() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{
                 width: 36, height: 36, borderRadius: '50%',
-                background: 'rgba(76,175,80,0.15)',
+                background: 'color-mix(in srgb, var(--green) 15%, transparent)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 color: 'var(--green)', fontSize: '1.125rem',
               }}>✓</div>

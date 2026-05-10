@@ -169,7 +169,7 @@ function SplitGroupRow({
             {name}
             <span style={{
               fontSize: '0.6875rem', fontWeight: 600, padding: '1px 7px',
-              borderRadius: 999, background: 'rgba(26,143,212,0.12)', color: 'var(--primary)',
+              borderRadius: 999, background: 'color-mix(in srgb, var(--primary) 12%, transparent)', color: 'var(--primary)',
             }}>
               Split · {splits.length}
             </span>

@@ -189,7 +189,7 @@ export default function EmiSchedulePage() {
                   className="progress-fill"
                   style={{
                     width: `${(settledCount / rows.length) * 100}%`,
-                    background: overdueCount > 0 ? 'var(--red)' : 'var(--primary)',
+                    background: overdueCount > 0 ? 'var(--red)' : 'var(--primary-deep)',
                   }}
                 />
               </div>
@@ -252,7 +252,7 @@ export default function EmiSchedulePage() {
                         {row.isSplitInstallment && (
                           <span style={{
                             fontSize: '0.625rem', fontWeight: 600, padding: '1px 6px',
-                            borderRadius: 999, background: 'rgba(26,143,212,0.12)', color: 'var(--primary)',
+                            borderRadius: 999, background: 'color-mix(in srgb, var(--primary) 12%, transparent)', color: 'var(--primary)',
                           }}>Split</span>
                         )}
                       </div>

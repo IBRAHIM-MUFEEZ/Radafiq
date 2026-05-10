@@ -1,11 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  Home, Users, CreditCard, Calendar, BarChart2, Settings,
+  Home, Users, CreditCard, Calendar, BarChart2, Settings, Sparkles, type LucideIcon,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { getInitials } from '../utils/format';
 import RadafiqLogo from './RadafiqLogo';
+import AnimatedAvatar from './AnimatedAvatar';
 
 const NAV_ITEMS = [
   { path: '/dashboard', label: 'Home', icon: Home },
@@ -16,9 +16,32 @@ const NAV_ITEMS = [
   { path: '/settings', label: 'Settings', icon: Settings },
 ];
 
+function NavIcon({ Icon, isActive }: { Icon: LucideIcon; isActive: boolean }) {
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex' }}>
+      <Icon size={18} />
+      {isActive && (
+        <Sparkles
+          size={10}
+          style={{
+            position: 'absolute',
+            top: -4,
+            right: -6,
+            color: 'var(--primary)',
+            animation: 'bounce 2s ease-in-out infinite',
+            opacity: 0.7,
+          }}
+        />
+      )}
+    </span>
+  );
+}
+
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { profile } = useApp();
   const location = useLocation();
+
+  const navItemsWithSparkles = useMemo(() => NAV_ITEMS, []);
 
   return (
     <div className="app-layout">
@@ -33,33 +56,29 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav style={{ flex: 1 }}>
-          {NAV_ITEMS.map(({ path, label, icon: Icon }) => (
-            <NavLink
-              key={path}
-              to={path}
-              className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
-            >
-              <Icon size={18} />
-              {label}
-            </NavLink>
-          ))}
+          {navItemsWithSparkles.map(({ path, label, icon: Icon }) => {
+            const isActive = location.pathname.startsWith(path);
+            return (
+              <NavLink
+                key={path}
+                to={path}
+                className={`nav-item${isActive ? ' active' : ''}`}
+              >
+                <NavIcon Icon={Icon} isActive={isActive} />
+                {label}
+              </NavLink>
+            );
+          })}
         </nav>
 
         {profile && (
           <div style={{ padding: '1rem 1.25rem', borderTop: '1px solid var(--outline)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div className="avatar" style={{ width: 36, height: 36, fontSize: '0.75rem', flexShrink: 0 }}>
-                {profile.photoUrl ? (
-                  <img
-                    src={profile.photoUrl}
-                    alt=""
-                    referrerPolicy="no-referrer"
-                    style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
-                  />
-                ) : (
-                  getInitials(profile.displayName)
-                )}
-              </div>
+              <AnimatedAvatar
+                name={profile.displayName}
+                photoUrl={profile.photoUrl}
+                size={36}
+              />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: '0.875rem', fontWeight: 600, wordBreak: 'break-word' }}>
                   {profile.displayName}
@@ -76,7 +95,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {/* Main content */}
       <main className="main-content">
         <div className="radafiq-bg">
-          <div className="fade-in">
+          <div className="bg-orb" />
+          <div className="bg-orb" />
+          <div key={location.pathname} className="fade-in">
             {children}
           </div>
         </div>
@@ -93,7 +114,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               className={`bottom-nav-item${isActive ? ' active' : ''}`}
             >
               <Icon size={20} />
-              {label}
+              <span style={{ fontSize: '0.625rem', fontWeight: isActive ? 700 : 500 }}>
+                {label}
+              </span>
             </NavLink>
           );
         })}

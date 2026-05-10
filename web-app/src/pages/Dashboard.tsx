@@ -1,36 +1,44 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Settings } from 'lucide-react';
+import { TrendingUp, TrendingDown, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { formatMoney, getGreeting, getInitials } from '../utils/format';
-import { CardSummary, CustomerSummary, isVisibleInTransactions, isScheduledForFutureMonth } from '../types/models';
+import { formatMoney, getGreeting } from '../utils/format';
+import { CardSummary, isVisibleInTransactions, isScheduledForFutureMonth } from '../types/models';
+import AnimatedAvatar from '../components/AnimatedAvatar';
 
 function HeroPanel({ title, amount, subtitle }: { title: string; amount: string; subtitle: string }) {
   return (
-    <div className="hero-panel" style={{ marginBottom: '1rem' }}>
+    <div className="hero-panel shift-gradient" style={{ marginBottom: '1rem' }}>
       <p style={{ fontSize: '0.8125rem', fontWeight: 600, opacity: 0.8, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>{title}</p>
-      <h1 style={{ fontSize: '2.25rem', fontWeight: 800, marginBottom: 8 }}>{amount}</h1>
+      <h1 style={{ fontSize: '2.25rem', fontWeight: 800, marginBottom: 8, letterSpacing: '-0.02em' }}>{amount}</h1>
       <p style={{ fontSize: '0.875rem', opacity: 0.75 }}>{subtitle}</p>
     </div>
   );
 }
 
-function ActivityCard({ card, currentDue, emiOutstanding }: {
+function ActivityCard({ card, currentDue, emiOutstanding, index }: {
   card: CardSummary;
   currentDue: number;
   emiOutstanding: number;
+  index: number;
 }) {
   const isCredit = card.accountKind === 'credit_card';
   const accentColor = isCredit ? 'var(--warning)' : 'var(--secondary)';
+  const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="flow-card" style={{ '--card-accent': accentColor, marginBottom: '0.75rem' } as React.CSSProperties}>
+    <div
+      className={`flow-card hover-lift stagger-${Math.min(index + 1, 10)}`}
+      style={{ '--card-accent': accentColor, marginBottom: '0.75rem', cursor: 'pointer' } as React.CSSProperties}
+      onClick={() => setExpanded(v => !v)}
+    >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div style={{
           width: 42, height: 42, borderRadius: '50%',
           background: `color-mix(in srgb, ${accentColor} 15%, transparent)`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           flexShrink: 0, marginTop: 2,
+          transition: 'all 0.3s ease',
         }}>
           {isCredit ? <TrendingUp size={18} color={accentColor} /> : <TrendingDown size={18} color={accentColor} />}
         </div>
@@ -50,6 +58,7 @@ function ActivityCard({ card, currentDue, emiOutstanding }: {
                 background: 'color-mix(in srgb, var(--warning) 8%, transparent)',
                 border: '1px solid color-mix(in srgb, var(--warning) 20%, transparent)',
                 borderRadius: 8, padding: '6px 10px',
+                transition: 'all 0.2s ease',
               }}>
                 <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   Current Due
@@ -65,12 +74,29 @@ function ActivityCard({ card, currentDue, emiOutstanding }: {
                   background: 'color-mix(in srgb, var(--primary) 8%, transparent)',
                   border: '1px solid color-mix(in srgb, var(--primary) 20%, transparent)',
                   borderRadius: 8, padding: '6px 10px',
+                  transition: 'all 0.2s ease',
                 }}>
                   <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     EMI Outstanding
                   </div>
                   <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--primary)', marginTop: 2 }}>
                     {formatMoney(emiOutstanding)}
+                  </div>
+                </div>
+              )}
+              {expanded && (
+                <div style={{
+                  width: '100', marginTop: 4,
+                  fontSize: '0.8125rem', color: 'var(--text-muted)',
+                  animation: 'slideUp 0.2s ease',
+                }}>
+                  <div className="accent-row">
+                    <span className="accent-label">Total Used</span>
+                    <span className="accent-value" style={{ fontSize: '0.875rem' }}>{formatMoney(card.bill)}</span>
+                  </div>
+                  <div className="accent-row">
+                    <span className="accent-label">Total Paid</span>
+                    <span className="accent-value" style={{ fontSize: '0.875rem', color: 'var(--success)' }}>{formatMoney(Math.max(0, card.bill - card.payable))}</span>
                   </div>
                 </div>
               )}
@@ -93,18 +119,20 @@ interface PersonSummary {
   totalDue: number;
 }
 
-function PersonCard({ person }: { person: PersonSummary }) {
-  const initials = getInitials(person.personName);
+function PersonCard({ person, index }: { person: PersonSummary; index: number }) {
   return (
-    <div className="flow-card" style={{ '--card-accent': 'var(--primary)', marginBottom: '0.75rem' } as React.CSSProperties}>
+    <div
+      className={`flow-card hover-lift stagger-${Math.min(index + 1, 10)}`}
+      style={{ '--card-accent': 'var(--primary)', marginBottom: '0.75rem' } as React.CSSProperties}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <div className="avatar">{initials}</div>
+        <AnimatedAvatar name={person.personName} size={40} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="truncate font-semibold">{person.personName}</div>
           <div className="text-muted text-sm">Person • Used {formatMoney(person.totalUsed)}</div>
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontWeight: 700, color: person.totalDue > 0 ? 'var(--warning)' : 'var(--primary)' }}>
+          <div style={{ fontWeight: 700, fontSize: '1.05rem', color: person.totalDue > 0 ? 'var(--warning)' : 'var(--primary)' }}>
             {formatMoney(person.totalDue)}
           </div>
           <div className="text-muted text-xs">{person.totalDue > 0 ? 'Due' : 'Settled'}</div>
@@ -184,32 +212,25 @@ export default function Dashboard() {
 
   const greeting = getGreeting();
   const name = profile?.displayName?.trim() || 'Your Profile';
-  const initials = getInitials(name);
 
   return (
     <div className="page-content">
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
-          <p className="text-muted text-sm">{greeting}</p>
+          <p className="text-muted text-sm" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {greeting}
+            <Sparkles size={12} style={{ color: 'var(--warning)', opacity: 0.6 }} />
+          </p>
           <h2 style={{ marginTop: 2 }}>{name}</h2>
         </div>
-        <button
-          className="avatar"
-          style={{ cursor: 'pointer', border: '1px solid rgba(255,255,255,0.3)' }}
+        <AnimatedAvatar
+          name={name}
+          photoUrl={profile?.photoUrl}
+          size={44}
           onClick={() => navigate('/settings')}
-          title="Settings"
-          aria-label="Open settings"
-        >
-          {profile?.photoUrl ? (
-            <img
-              src={profile.photoUrl}
-              alt=""
-              referrerPolicy="no-referrer"
-              style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
-            />
-          ) : initials}
-        </button>
+          style={{ cursor: 'pointer' }}
+        />
       </div>
 
       {/* Hero */}
@@ -245,16 +266,17 @@ export default function Dashboard() {
         ) : (
           <>
             {/* BUG-35 fix: sort first, then slice */}
-            {[...visibleCards].sort((a, b) => b.payable - a.payable).slice(0, 6).map(card => (
+            {[...visibleCards].sort((a, b) => b.payable - a.payable).slice(0, 6).map((card, idx) => (
               <ActivityCard
                 key={card.id}
                 card={card}
+                index={idx}
                 currentDue={nonEmiDueByAccount.get(card.id) ?? 0}
                 emiOutstanding={emiOutstandingByAccount.get(card.id) ?? 0}
               />
             ))}
-            {personSummaries.slice(0, 6).map(person => (
-              <PersonCard key={person.personId} person={person} />
+            {personSummaries.slice(0, 6).map((person, idx) => (
+              <PersonCard key={person.personId} person={person} index={idx} />
             ))}
           </>
         )}

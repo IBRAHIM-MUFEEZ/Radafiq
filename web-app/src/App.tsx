@@ -25,8 +25,11 @@ function AppRoutes() {
 
   if (authLoading || profileLoading) {
     return (
-      <div className="radafiq-bg" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-        <div className="spinner" />
+      <div className="radafiq-bg" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', flexDirection: 'column', gap: 16 }}>
+        <div className="spinner" style={{ width: 48, height: 48, borderWidth: 4 }} />
+        <p className="text-muted text-sm" style={{ animation: 'breathe 2s ease-in-out infinite' }}>
+          Loading your finances...
+        </p>
       </div>
     );
   }

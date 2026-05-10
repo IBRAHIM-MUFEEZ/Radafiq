@@ -1,15 +1,21 @@
 package com.radafiq.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +30,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -56,6 +63,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -191,6 +199,8 @@ private fun DashboardBottomBar(
     currentScreen: DashboardTab,
     onTabSelected: (DashboardTab) -> Unit
 ) {
+    val springSpec = spring<Float>(dampingRatio = 0.5f, stiffness = 500f)
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -211,36 +221,49 @@ private fun DashboardBottomBar(
         ) {
             DashboardTabs.forEach { item ->
                 val selected = currentScreen == item.tab
-                val containerColor = if (selected) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                } else {
-                    Color.Transparent
-                }
-                val contentColor = if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
+                val animatedScale by animateFloatAsState(
+                    targetValue = if (selected) 1.15f else 1f,
+                    animationSpec = springSpec,
+                    label = "iconScale"
+                )
+                val animatedBgAlpha by animateFloatAsState(
+                    targetValue = if (selected) 0.14f else 0f,
+                    animationSpec = tween(250),
+                    label = "bgAlpha"
+                )
+                val animatedColor: Color by animateColorAsState(
+                    targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    animationSpec = tween(250),
+                    label = "iconColor"
+                )
 
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(18.dp))
-                        .background(containerColor)
-                        .clickable { onTabSelected(item.tab) }
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = animatedBgAlpha))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onTabSelected(item.tab) }
                         .padding(vertical = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(
-                        imageVector = item.icon,
-                        contentDescription = item.label,
-                        tint = contentColor
-                    )
+                    Box(
+                        modifier = Modifier
+                            .scale(animatedScale)
+                    ) {
+                        Icon(
+                            imageVector = item.icon,
+                            contentDescription = item.label,
+                            tint = animatedColor
+                        )
+                    }
                     Text(
                         text = item.label,
                         style = MaterialTheme.typography.labelSmall,
-                        color = contentColor,
+                        color = animatedColor,
                         maxLines = 1
                     )
                 }
@@ -482,12 +505,18 @@ fun HomeScreen(
                 }
             }
         } else {
-            items(activityCards.sortedByDescending { it.payable }.take(6), key = { it.id }) { card ->
-                HomeActivityCard(
-                    card = card,
-                    currentDue = nonEmiDueByAccount[card.id] ?: 0.0,
-                    emiOutstanding = emiOutstandingByAccount[card.id] ?: 0.0
-                )
+            itemsIndexed(activityCards.sortedByDescending { it.payable }.take(6), key = { _, c -> c.id }) { idx, card ->
+                AnimatedVisibility(
+                    visible = true,
+                    enter = fadeIn(tween(300 + idx * 50)) + slideInVertically(tween(300 + idx * 50)) { it / 4 },
+                    label = "cardAnim"
+                ) {
+                    HomeActivityCard(
+                        card = card,
+                        currentDue = nonEmiDueByAccount[card.id] ?: 0.0,
+                        emiOutstanding = emiOutstandingByAccount[card.id] ?: 0.0
+                    )
+                }
             }
             // FIX-20: Show "Show all" link when list is truncated
             if (activityCards.size > 6) {
@@ -504,8 +533,14 @@ fun HomeScreen(
                     }
                 }
             }
-            items(activityPersons.take(6), key = { "person_${it.personId}" }) { person ->
-                HomePersonCard(person = person)
+            itemsIndexed(activityPersons.take(6), key = { _, p -> "person_${p.personId}" }) { idx, person ->
+                AnimatedVisibility(
+                    visible = true,
+                    enter = fadeIn(tween(300 + idx * 50)) + slideInVertically(tween(300 + idx * 50)) { it / 4 },
+                    label = "personCardAnim"
+                ) {
+                    HomePersonCard(person = person)
+                }
             }
             if (activityPersons.size > 6) {
                 item {

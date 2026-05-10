@@ -2,7 +2,6 @@ package com.radafiq.ui
 
 import android.app.Activity
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -16,9 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -30,6 +27,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
@@ -37,10 +39,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
@@ -53,66 +52,62 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import com.radafiq.data.settings.AppThemeMode
 
-private val RadafiqNight = Color(0xFF020D18)
-private val RadafiqNightDeep = Color(0xFF071525)
-private val RadafiqNightSoft = Color(0xFF0C2035)
-private val RadafiqNightRaised = Color(0xFF102840)
-private val RadafiqOutline = Color(0xFF1A4060)
-private val RadafiqCanvas = Color(0xFFF0F8FF)
-private val RadafiqWhite = Color(0xFFFFFFFF)
-private val RadafiqText = Color(0xFFE8F4FF)
-private val RadafiqMuted = Color(0xFF6BAED4)
+// ── Salt & Pepper Monochrome Theme ────────────────────────────────────────
+private val PepperWhite = Color(0xFFFFFFFF)
+private val CardGray = Color(0xFFD4D4D4)
+private val BorderGray = Color(0xFFB3B3B3)
+private val TextDark = Color(0xFF2B2B2B)
+private val MutedGray = Color(0xFF808080)
+private val SubtleGray = Color(0xFFE8E8E8)
 
-// Logo brand colors — deep blue → teal → green
-private val RadafiqBlueDeep = Color(0xFF1A4FD4)
-private val RadafiqBlue = Color(0xFF1A8FD4)
-private val RadafiqTeal = Color(0xFF1AABCF)
-private val RadafiqGreen = Color(0xFF1DD9A0)
-private val RadafiqRed = Color(0xFFE8445A)
-private val RadafiqRedSoft = Color(0xFFFFAAB5)
+private val DarkBg = Color(0xFF2B2B2B)
+private val DarkSurface = Color(0xFF3C3C3C)
+private val DarkBorder = Color(0xFF555555)
+private val DarkText = Color(0xFFF5F5F5)
+private val DarkMuted = Color(0xFFAAAAAA)
 
 private val RadafiqLightColors: ColorScheme = lightColorScheme(
-    primary = RadafiqBlue,
-    onPrimary = RadafiqWhite,
-    primaryContainer = Color(0xFFD8EFFA),
-    onPrimaryContainer = Color(0xFF071525),
-    secondary = RadafiqBlueDeep,
-    onSecondary = RadafiqWhite,
-    secondaryContainer = Color(0xFFD0E8F8),
-    onSecondaryContainer = Color(0xFF071525),
-    tertiary = RadafiqGreen,
-    onTertiary = Color(0xFF071525),
-    error = RadafiqRed,
-    onError = RadafiqWhite,
-    background = RadafiqCanvas,
-    onBackground = Color(0xFF071525),
-    surface = RadafiqWhite,
-    onSurface = Color(0xFF071525),
-    surfaceVariant = Color(0xFFD8EFFA),
-    onSurfaceVariant = Color(0xFF3A7FA8),
-    outline = Color(0xFFA8D4EA)
+    primary = TextDark,
+    onPrimary = PepperWhite,
+    primaryContainer = CardGray,
+    onPrimaryContainer = TextDark,
+    secondary = TextDark,
+    onSecondary = PepperWhite,
+    secondaryContainer = CardGray,
+    onSecondaryContainer = TextDark,
+    tertiary = TextDark,
+    onTertiary = PepperWhite,
+    error = TextDark,
+    onError = PepperWhite,
+    background = PepperWhite,
+    onBackground = TextDark,
+    surface = PepperWhite,
+    onSurface = TextDark,
+    surfaceVariant = SubtleGray,
+    onSurfaceVariant = MutedGray,
+    outline = BorderGray
 )
 
 private val RadafiqDarkColors: ColorScheme = darkColorScheme(
-    primary = RadafiqBlue,
-    onPrimary = RadafiqWhite,
-    primaryContainer = RadafiqBlueDeep,
-    onPrimaryContainer = RadafiqText,
-    secondary = RadafiqTeal,
-    onSecondary = Color(0xFF071525),
-    secondaryContainer = Color(0xFF0C2035),
-    onSecondaryContainer = Color(0xFFB8E8F8),
-    tertiary = RadafiqGreen,
-    onTertiary = RadafiqNightDeep,
-    error = RadafiqRed,
-    onError = RadafiqWhite,
-    background = RadafiqNight,
-    onBackground = RadafiqText,
-    surface = RadafiqNightDeep,
-    onSurface = RadafiqText,
-    surfaceVariant = RadafiqNightSoft,
-    onSurfaceVariant = RadafiqMuted,
-    outline = RadafiqOutline
+    primary = DarkText,
+    onPrimary = DarkBg,
+    primaryContainer = DarkSurface,
+    onPrimaryContainer = DarkText,
+    secondary = DarkText,
+    onSecondary = DarkBg,
+    secondaryContainer = DarkSurface,
+    onSecondaryContainer = DarkText,
+    tertiary = DarkText,
+    onTertiary = DarkBg,
+    error = DarkText,
+    onError = DarkBg,
+    background = DarkBg,
+    onBackground = DarkText,
+    surface = DarkSurface,
+    onSurface = DarkText,
+    surfaceVariant = DarkSurface,
+    onSurfaceVariant = DarkMuted,
+    outline = DarkBorder
 )
 
 private val LocalRadafiqDarkTheme = staticCompositionLocalOf { true }
@@ -122,36 +117,38 @@ private val BaseTypography = Typography()
 private fun appStyle(
     base: TextStyle,
     weight: FontWeight,
-    letterSpacing: Float = 0f
+    letterSpacing: Float = 0f,
+    lineHeight: Float = 1.3f
 ): TextStyle {
     return base.copy(
         fontFamily = AppSans,
         fontWeight = weight,
-        letterSpacing = letterSpacing.sp
+        letterSpacing = letterSpacing.sp,
+        lineHeight = (base.fontSize.value * lineHeight).sp
     )
 }
 
 private val RadafiqTypography = Typography(
-    headlineLarge = appStyle(BaseTypography.headlineLarge, FontWeight.Bold, 0.02f),
-    headlineMedium = appStyle(BaseTypography.headlineMedium, FontWeight.Bold, 0.02f),
-    headlineSmall = appStyle(BaseTypography.headlineSmall, FontWeight.SemiBold, 0.01f),
-    titleLarge = appStyle(BaseTypography.titleLarge, FontWeight.SemiBold, 0.01f),
-    titleMedium = appStyle(BaseTypography.titleMedium, FontWeight.SemiBold, 0.01f),
-    titleSmall = appStyle(BaseTypography.titleSmall, FontWeight.Medium, 0.01f),
-    bodyLarge = appStyle(BaseTypography.bodyLarge, FontWeight.Normal),
-    bodyMedium = appStyle(BaseTypography.bodyMedium, FontWeight.Normal),
-    bodySmall = appStyle(BaseTypography.bodySmall, FontWeight.Normal),
-    labelLarge = appStyle(BaseTypography.labelLarge, FontWeight.SemiBold, 0.03f),
-    labelMedium = appStyle(BaseTypography.labelMedium, FontWeight.Medium, 0.03f),
-    labelSmall = appStyle(BaseTypography.labelSmall, FontWeight.Medium, 0.04f)
+    headlineLarge = appStyle(BaseTypography.headlineLarge, FontWeight.Bold, -0.02f, 1.2f),
+    headlineMedium = appStyle(BaseTypography.headlineMedium, FontWeight.Bold, -0.01f, 1.25f),
+    headlineSmall = appStyle(BaseTypography.headlineSmall, FontWeight.SemiBold, 0f, 1.3f),
+    titleLarge = appStyle(BaseTypography.titleLarge, FontWeight.SemiBold, -0.01f, 1.3f),
+    titleMedium = appStyle(BaseTypography.titleMedium, FontWeight.SemiBold, 0f, 1.35f),
+    titleSmall = appStyle(BaseTypography.titleSmall, FontWeight.Medium, 0.01f, 1.4f),
+    bodyLarge = appStyle(BaseTypography.bodyLarge, FontWeight.Normal, 0f, 1.6f),
+    bodyMedium = appStyle(BaseTypography.bodyMedium, FontWeight.Normal, 0f, 1.5f),
+    bodySmall = appStyle(BaseTypography.bodySmall, FontWeight.Normal, 0f, 1.4f),
+    labelLarge = appStyle(BaseTypography.labelLarge, FontWeight.SemiBold, 0.02f, 1.3f),
+    labelMedium = appStyle(BaseTypography.labelMedium, FontWeight.Medium, 0.02f, 1.3f),
+    labelSmall = appStyle(BaseTypography.labelSmall, FontWeight.Medium, 0.03f, 1.3f)
 )
 
 private val RadafiqShapes = Shapes(
-    extraSmall = RoundedCornerShape(18.dp),
-    small = RoundedCornerShape(22.dp),
-    medium = RoundedCornerShape(28.dp),
-    large = RoundedCornerShape(32.dp),
-    extraLarge = RoundedCornerShape(36.dp)
+    extraSmall = RoundedCornerShape(14.dp),
+    small = RoundedCornerShape(18.dp),
+    medium = RoundedCornerShape(22.dp),
+    large = RoundedCornerShape(26.dp),
+    extraLarge = RoundedCornerShape(30.dp)
 )
 
 @Composable
@@ -165,11 +162,8 @@ fun RadafiqTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as? Activity)?.window ?: return@SideEffect
-            val statusBarColor = if (useDarkTheme) {
-                RadafiqNightDeep
-            } else {
-                Color(0xFFD8EFFA)
-            }
+            val statusBarColor = if (useDarkTheme) DarkBg else PepperWhite
+            @Suppress("DEPRECATION")
             window.statusBarColor = statusBarColor.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !useDarkTheme
         }
@@ -187,64 +181,15 @@ fun RadafiqTheme(
 
 @Composable
 fun RadafiqBackground(content: @Composable () -> Unit) {
-    val useDarkTheme = LocalRadafiqDarkTheme.current
-    val backgroundBrush = if (useDarkTheme) {
-        Brush.verticalGradient(
-            colors = listOf(
-                Color(0xFF020D18),
-                Color(0xFF071525),
-                MaterialTheme.colorScheme.background
-            )
-        )
-    } else {
-        Brush.verticalGradient(
-            colors = listOf(
-                RadafiqWhite,
-                Color(0xFFEAF6FF),
-                MaterialTheme.colorScheme.background
-            )
-        )
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(backgroundBrush)
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        GlassBackdrop()
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = Color.Transparent,
             content = content
-        )
-    }
-}
-
-@Composable
-private fun GlassBackdrop() {
-    val useDarkTheme = LocalRadafiqDarkTheme.current
-    val primaryGlow = RadafiqBlue.copy(alpha = if (useDarkTheme) 0.18f else 0.12f)
-    val secondaryGlow = RadafiqGreen.copy(alpha = if (useDarkTheme) 0.12f else 0.10f)
-    val tertiaryGlow = RadafiqTeal.copy(alpha = if (useDarkTheme) 0.10f else 0.08f)
-
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        drawCircle(
-            color = primaryGlow,
-            radius = size.minDimension * 0.28f,
-            center = Offset(size.width * 0.18f, size.height * 0.1f),
-            style = Fill
-        )
-        drawCircle(
-            color = secondaryGlow,
-            radius = size.minDimension * 0.24f,
-            center = Offset(size.width * 0.92f, size.height * 0.18f),
-            style = Fill
-        )
-        drawCircle(
-            color = tertiaryGlow,
-            radius = size.minDimension * 0.22f,
-            center = Offset(size.width * 0.76f, size.height * 0.86f),
-            style = Fill
         )
     }
 }
@@ -354,55 +299,23 @@ fun FlowCard(
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(30.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (useDarkTheme) {
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
-            } else {
-                RadafiqWhite.copy(alpha = 0.82f)
-            },
-            contentColor = MaterialTheme.colorScheme.onSurface
+            containerColor = if (useDarkTheme) DarkSurface else CardGray,
+            contentColor = if (useDarkTheme) DarkText else TextDark
         ),
         border = BorderStroke(
-            width = 1.dp,
-            color = if (useDarkTheme) {
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.56f)
-            } else {
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.38f)
-            }
+            width = 0.5.dp,
+            color = if (useDarkTheme) DarkBorder else BorderGray
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = if (useDarkTheme) 0.dp else 1.dp)
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(
-                            accentColor.copy(alpha = if (useDarkTheme) 0.16f else 0.1f),
-                            MaterialTheme.colorScheme.surface.copy(alpha = if (useDarkTheme) 0.98f else 0.82f),
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (useDarkTheme) 0.68f else 0.52f)
-                        ),
-                        start = Offset.Zero,
-                        end = Offset(960f, 960f)
-                    )
-                )
+                .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 14.dp, end = 12.dp)
-                    .size(104.dp)
-                    .clip(CircleShape)
-                    .background(accentColor.copy(alpha = if (useDarkTheme) 0.08f else 0.1f))
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
-            ) {
-                content()
-            }
+            content()
         }
     }
 }
@@ -415,57 +328,29 @@ fun HeroPanel(
     modifier: Modifier = Modifier
 ) {
     val useDarkTheme = LocalRadafiqDarkTheme.current
+    val bgColor = if (useDarkTheme) DarkSurface else CardGray
+    val textColor = if (useDarkTheme) DarkText else TextDark
+    val mutedColor = if (useDarkTheme) DarkMuted else MutedGray
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(32.dp))
-            .border(
-                width = 1.dp,
-                color = if (useDarkTheme) {
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.56f)
-                } else {
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-                },
-                shape = RoundedCornerShape(32.dp)
-            )
-            .background(
-                Brush.linearGradient(
-                    colors = if (useDarkTheme) {
-                        listOf(
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
-                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.82f)
-                        )
-                    } else {
-                        listOf(
-                            RadafiqWhite.copy(alpha = 0.92f),
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.62f),
-                            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.88f)
-                        )
-                    }
-                )
-            )
+            .clip(RoundedCornerShape(12.dp))
+            .background(bgColor)
+            .border(0.5.dp, if (useDarkTheme) DarkBorder else BorderGray, RoundedCornerShape(12.dp))
             .padding(horizontal = 22.dp, vertical = 24.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .size(120.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = if (useDarkTheme) 0.14f else 0.12f))
-        )
         Column {
             Text(
                 text = title,
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = mutedColor
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = amount,
                 style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = textColor,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
@@ -473,7 +358,7 @@ fun HeroPanel(
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = mutedColor,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
@@ -488,37 +373,30 @@ fun MetricPill(
     color: Color,
     modifier: Modifier = Modifier
 ) {
-    Row(
+    Column(
         modifier = modifier
-        .clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.34f), RoundedCornerShape(18.dp))
-            .defaultMinSize(minHeight = 72.dp)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(0.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+            .defaultMinSize(minHeight = 60.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(12.dp)
-                .clip(CircleShape)
-                .background(color)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
-        Column(modifier = Modifier.padding(start = 10.dp)) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 2.dp)
+        )
     }
 }
 
@@ -535,10 +413,10 @@ fun StatusBadge(
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(color.copy(alpha = 0.14f))
-            .border(1.dp, color.copy(alpha = 0.22f), RoundedCornerShape(16.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(0.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
     )
 }
 
@@ -552,10 +430,10 @@ fun AccentValueRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.32f), RoundedCornerShape(18.dp))
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -597,9 +475,9 @@ fun EmptyState(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
-                .clip(RoundedCornerShape(28.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.74f))
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.34f), RoundedCornerShape(28.dp))
+                .clip(RoundedCornerShape(24.dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.70f))
+                .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.30f), RoundedCornerShape(24.dp))
                 .padding(24.dp)
         ) {
             Text(
@@ -619,11 +497,56 @@ fun EmptyState(
     }
 }
 
+@Composable
+fun AnimatedCounter(value: String, style: TextStyle = MaterialTheme.typography.headlineLarge, color: Color = MaterialTheme.colorScheme.onSurface) {
+    AnimatedContent(
+        targetState = value,
+        transitionSpec = {
+            fadeIn(animationSpec = tween(300)) togetherWith
+            fadeOut(animationSpec = tween(200))
+        },
+        label = "counter"
+    ) { v ->
+        Text(text = v, style = style, color = color, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+fun AnimatedCard(
+    modifier: Modifier = Modifier,
+    accentColor: Color = MaterialTheme.colorScheme.primary,
+    content: @Composable () -> Unit
+) {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (useDarkTheme) DarkSurface else CardGray,
+            contentColor = if (useDarkTheme) DarkText else TextDark
+        ),
+        border = BorderStroke(
+            width = 0.5.dp,
+            color = if (useDarkTheme) DarkBorder else BorderGray
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (useDarkTheme) 0.dp else 1.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+        ) {
+            content()
+        }
+    }
+}
+
 fun formatMoney(value: Double): String {
     val formatter = java.text.NumberFormat.getNumberInstance(java.util.Locale("en", "IN"))
     formatter.minimumFractionDigits = 2
     formatter.maximumFractionDigits = 2
-    return "₹${formatter.format(value)}"
+    return "\u20B9${formatter.format(value)}"
 }
 
 fun formatDisplayDate(isoDate: String): String {
@@ -643,13 +566,9 @@ fun parseDisplayDate(display: String): String {
 }
 
 fun accountAccent(accountKind: com.radafiq.data.models.AccountKind): Color {
-    return when (accountKind) {
-        com.radafiq.data.models.AccountKind.BANK_ACCOUNT -> RadafiqBlue
-        com.radafiq.data.models.AccountKind.CREDIT_CARD  -> RadafiqRed
-        com.radafiq.data.models.AccountKind.PERSON       -> RadafiqGreen
-    }
+    return TextDark
 }
 
-fun warningColor(): Color = RadafiqRed
+fun warningColor(): Color = TextDark
 
-fun dangerColor(): Color = RadafiqRedSoft
+fun dangerColor(): Color = TextDark

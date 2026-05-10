@@ -23,29 +23,29 @@ import java.time.format.DateTimeFormatter
 
 class StatementGenerator(private val context: Context) {
 
-    // ── Light palette (matches new blue-teal-green brand) ────────────────────
-    private val LIGHT_BG_PAGE    = 0xFFF0F8FF.toInt()   // ice blue canvas
+    // ── Light palette (modern indigo/cyan) ────────────────────────────────────
+    private val LIGHT_BG_PAGE    = 0xFFF5F3FF.toInt()   // light indigo canvas
     private val LIGHT_BG_RAISED  = 0xFFFFFFFF.toInt()   // white card
-    private val LIGHT_BG_SOFT    = 0xFFD8EFFA.toInt()   // surfaceVariant
-    private val LIGHT_TEXT_PRI   = 0xFF071525.toInt()   // deep navy text
-    private val LIGHT_TEXT_MUTED = 0xFF3A7FA8.toInt()   // muted blue
-    private val LIGHT_OUTLINE    = 0xFFA8D4EA.toInt()   // light teal outline
+    private val LIGHT_BG_SOFT    = 0xFFEDE9FE.toInt()   // surfaceVariant
+    private val LIGHT_TEXT_PRI   = 0xFF0B0E1A.toInt()   // deep indigo text
+    private val LIGHT_TEXT_MUTED = 0xFF6B7280.toInt()   // muted gray
+    private val LIGHT_OUTLINE    = 0xFFC7D2FE.toInt()   // light indigo outline
 
-    // ── Dark palette (matches new blue-teal-green brand) ─────────────────────
-    private val DARK_BG_DEEP     = 0xFF071525.toInt()   // deep navy
-    private val DARK_BG_SOFT     = 0xFF0C2035.toInt()   // mid navy
-    private val DARK_BG_RAISED   = 0xFF102840.toInt()   // raised navy
-    private val DARK_TEXT_PRI    = 0xFFE8F4FF.toInt()   // ice white text
-    private val DARK_TEXT_MUTED  = 0xFF6BAED4.toInt()   // muted blue
-    private val DARK_OUTLINE     = 0xFF1A4060.toInt()   // dark teal outline
+    // ── Dark palette (modern indigo/cyan) ─────────────────────────────────────
+    private val DARK_BG_DEEP     = 0xFF11142B.toInt()   // deep indigo
+    private val DARK_BG_SOFT     = 0xFF191D3D.toInt()   // mid indigo
+    private val DARK_BG_RAISED   = 0xFF1E2248.toInt()   // raised indigo
+    private val DARK_TEXT_PRI    = 0xFFEEF2FF.toInt()   // ice white text
+    private val DARK_TEXT_MUTED  = 0xFF8B8FBF.toInt()   // muted indigo
+    private val DARK_OUTLINE     = 0xFF2D3168.toInt()   // dark indigo outline
 
     // ── Shared brand colors ───────────────────────────────────────────────────
-    private val PRIMARY        = 0xFF1A8FD4.toInt()   // mid blue
-    private val PRIMARY_DEEP   = 0xFF1A4FD4.toInt()   // deep blue
-    private val TEAL           = 0xFF1AABCF.toInt()   // teal
-    private val GREEN_BRAND    = 0xFF1DD9A0.toInt()   // green (arrow tip)
-    private val RED_ACCENT     = 0xFFE8445A.toInt()   // red
-    private val GREEN_SETTLED  = 0xFF1DD9A0.toInt()   // settled = brand green
+    private val PRIMARY        = 0xFF6366F1.toInt()   // indigo
+    private val PRIMARY_DEEP   = 0xFF4F46E5.toInt()   // deep indigo
+    private val TEAL           = 0xFF06B6D4.toInt()   // cyan
+    private val GREEN_BRAND    = 0xFF10B981.toInt()   // emerald
+    private val RED_ACCENT     = 0xFFEF4444.toInt()   // red
+    private val GREEN_SETTLED  = 0xFF10B981.toInt()   // settled = emerald
     private val ORANGE_PENDING = 0xFFF59E0B.toInt()   // amber pending
 
     // ── Active palette — set per generation ──────────────────────────────────
@@ -194,16 +194,16 @@ class StatementGenerator(private val context: Context) {
             val bgPaint = Paint().apply {
                 shader = LinearGradient(
                     0f, 0f, 0f, pageHeight.toFloat(),
-                    intArrayOf(0xFF020D18.toInt(), DARK_BG_DEEP, DARK_BG_SOFT),
+                    intArrayOf(0xFF0B0E1A.toInt(), DARK_BG_DEEP, DARK_BG_SOFT),
                     floatArrayOf(0f, 0.45f, 1f),
                     Shader.TileMode.CLAMP
                 )
             }
             canvas.drawRect(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat(), bgPaint)
-            // Subtle blue-teal glow blobs
-            val glow1 = Paint().apply { color = 0x2E1A8FD4.toInt() }  // blue
-            val glow2 = Paint().apply { color = 0x1E1DD9A0.toInt() }  // green
-            val glow3 = Paint().apply { color = 0x181AABCF.toInt() }  // teal
+            // Subtle indigo-cyan glow blobs
+            val glow1 = Paint().apply { color = 0x2E6366F1.toInt() }  // indigo
+            val glow2 = Paint().apply { color = 0x1E10B981.toInt() }  // emerald
+            val glow3 = Paint().apply { color = 0x1806B6D4.toInt() }  // cyan
             canvas.drawCircle(pageWidth * 0.18f, pageHeight * 0.10f, 90f, glow1)
             canvas.drawCircle(pageWidth * 0.92f, pageHeight * 0.18f, 75f, glow2)
             canvas.drawCircle(pageWidth * 0.76f, pageHeight * 0.86f, 70f, glow3)
@@ -211,15 +211,15 @@ class StatementGenerator(private val context: Context) {
             val bgPaint = Paint().apply {
                 shader = LinearGradient(
                     0f, 0f, 0f, pageHeight.toFloat(),
-                    intArrayOf(0xFFFFFFFF.toInt(), 0xFFEAF6FF.toInt(), LIGHT_BG_SOFT),
+                    intArrayOf(0xFFFFFFFF.toInt(), 0xFFEDE9FE.toInt(), LIGHT_BG_SOFT),
                     floatArrayOf(0f, 0.5f, 1f),
                     Shader.TileMode.CLAMP
                 )
             }
             canvas.drawRect(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat(), bgPaint)
-            // Subtle light blue glow blobs
-            val glow1 = Paint().apply { color = 0x181A8FD4.toInt() }  // blue
-            val glow2 = Paint().apply { color = 0x101DD9A0.toInt() }  // green
+            // Subtle light indigo glow blobs
+            val glow1 = Paint().apply { color = 0x186366F1.toInt() }  // indigo
+            val glow2 = Paint().apply { color = 0x1010B981.toInt() }  // emerald
             canvas.drawCircle(pageWidth * 0.18f, pageHeight * 0.10f, 80f, glow1)
             canvas.drawCircle(pageWidth * 0.88f, pageHeight * 0.15f, 65f, glow2)
         }

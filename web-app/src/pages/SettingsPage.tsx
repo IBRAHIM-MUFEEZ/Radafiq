@@ -318,22 +318,28 @@ export default function SettingsPage() {
       </div>
 
       {/* Appearance */}
-      <div className="flow-card" style={{ '--card-accent': 'var(--secondary)', marginBottom: '1rem' } as React.CSSProperties}>
+      <div className="flow-card hover-lift" style={{ '--card-accent': 'var(--secondary)', marginBottom: '1rem' } as React.CSSProperties}>
         <h3 style={{ marginBottom: '0.875rem' }}>Appearance</h3>
         <div className="two-col">
           <button
-            className={`btn ${settings.themeMode === 'LIGHT' ? 'btn-primary' : 'btn-outline'}`}
-            style={{ height: 52 }}
+            className={`btn btn-ripple ${settings.themeMode === 'LIGHT' ? 'btn-primary' : 'btn-outline'}`}
+            style={{ height: 56, fontSize: '0.9375rem', transition: 'all 0.3s ease' }}
             onClick={() => setThemeMode('LIGHT')}
           >
-            ☀️ Light
+            <span style={{ fontSize: '1.2rem', display: 'inline-block', transition: 'transform 0.3s ease' }}>
+              ☀️
+            </span>
+            {' '}Light
           </button>
           <button
-            className={`btn ${settings.themeMode === 'DARK' ? 'btn-primary' : 'btn-outline'}`}
-            style={{ height: 52 }}
+            className={`btn btn-ripple ${settings.themeMode === 'DARK' ? 'btn-primary' : 'btn-outline'}`}
+            style={{ height: 56, fontSize: '0.9375rem', transition: 'all 0.3s ease' }}
             onClick={() => setThemeMode('DARK')}
           >
-            🌙 Dark
+            <span style={{ fontSize: '1.2rem', display: 'inline-block', transition: 'transform 0.3s ease' }}>
+              🌙
+            </span>
+            {' '}Dark
           </button>
         </div>
       </div>
