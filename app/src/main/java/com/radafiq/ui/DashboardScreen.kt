@@ -1,21 +1,9 @@
 package com.radafiq.ui
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,9 +16,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -40,6 +28,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material.icons.filled.SouthWest
 import androidx.compose.material.icons.filled.Delete
@@ -63,7 +52,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -71,15 +59,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import coil.compose.AsyncImage
 import com.radafiq.data.models.AccountKind
 import com.radafiq.data.models.CardSummary
-import com.radafiq.data.models.CustomerSummary
+import com.radafiq.data.profile.UserProfile
+import com.radafiq.data.security.AppSecurityState
+import com.radafiq.data.settings.AppSettingsState
+import com.radafiq.data.settings.AppThemeMode
 import com.radafiq.viewmodel.MainViewModel
 import java.time.LocalDate
 import java.time.LocalTime
 
 enum class DashboardTab {
-    HOME, ACCOUNTS, CUSTOMERS, EMI_SCHEDULE
+    HOME, ACCOUNTS, CUSTOMERS, EMI_SCHEDULE, SETTINGS
 }
 
 private data class DashboardTabItem(
@@ -92,32 +84,42 @@ private val DashboardTabs = listOf(
     DashboardTabItem(DashboardTab.HOME, "Home", Icons.Default.Home),
     DashboardTabItem(DashboardTab.ACCOUNTS, "Accounts", Icons.Default.CreditCard),
     DashboardTabItem(DashboardTab.CUSTOMERS, "Customers", Icons.Default.AccountBox),
-    DashboardTabItem(DashboardTab.EMI_SCHEDULE, "EMI", Icons.Default.CalendarMonth)
+    DashboardTabItem(DashboardTab.EMI_SCHEDULE, "EMI", Icons.Default.CalendarMonth),
+    DashboardTabItem(DashboardTab.SETTINGS, "Settings", Icons.Default.Settings)
 )
 
 @Composable
 fun DashboardScreen(
     navController: NavController,
     selectedAccountIds: Set<String>,
-    onOpenSettings: () -> Unit,
     profileName: String,
+    photoUrl: String,
     vm: MainViewModel = viewModel(),
+    settingsState: AppSettingsState,
+    profile: UserProfile?,
+    securityState: AppSecurityState,
+    lockedAccountIds: Set<String>,
+    backupStatusMessage: String,
+    isBackupOperationInProgress: Boolean,
+    lastDriveBackupTime: String?,
+    lastDriveRestoreTime: String?,
+    onThemeModeSelected: (AppThemeMode) -> Unit,
+    onAccountSelectionChanged: (String, Boolean) -> Unit,
+    onLockEnabledChanged: (Boolean) -> Unit,
+    onBiometricEnabledChanged: (Boolean) -> Unit,
+    onEditProfile: () -> Unit,
+    onOpenSecuritySetup: () -> Unit,
+    onBackupToDrive: () -> Unit,
+    onRestoreFromDrive: () -> Unit,
+    onDriveBackup: () -> Unit,
+    onDriveRestore: () -> Unit,
+    isDriveOperationInProgress: Boolean,
+    driveBackupStatusMessage: String,
+    onLogout: () -> Unit,
     onOpenCustomer: (String) -> Unit = {},
     onOpenAccount: (String) -> Unit = {}
 ) {
     var currentScreen by rememberSaveable { mutableStateOf(DashboardTab.HOME) }
-    val cards by vm.cards.collectAsState()
-    val customers by vm.customers.collectAsState()
-    val driveOperationMessage by vm.driveOperationMessage.collectAsState()
-
-    // Only show accounts that have been used in at least one customer transaction
-    val usedAccountIds = remember(customers) {
-        customers.flatMap { it.transactions }.map { it.accountId }.toSet()
-    }
-    val visibleCards = remember(cards, usedAccountIds) {
-        if (usedAccountIds.isEmpty()) emptyList()
-        else cards.filter { it.id in usedAccountIds }
-    }
 
     RadafiqBackground {
         Scaffold(
@@ -140,55 +142,56 @@ fun DashboardScreen(
                 )
             }
         ) { padding ->
-            val tabIndex = DashboardTabs.indexOfFirst { it.tab == currentScreen }
-            AnimatedContent(
-                targetState = currentScreen to tabIndex,
-                transitionSpec = {
-                    val (_, targetIdx) = targetState
-                    val (_, initialIdx) = initialState
-                    val forward = targetIdx > initialIdx
-                    (slideInHorizontally(
-                        animationSpec = tween(300),
-                        initialOffsetX = { if (forward) it else -it }
-                    ) + fadeIn(tween(300))) togetherWith
-                    (slideOutHorizontally(
-                        animationSpec = tween(300),
-                        targetOffsetX = { if (forward) -it else it }
-                    ) + fadeOut(tween(200)))
-                },
-                label = "dashboard-tab"
-            ) { (tab, _) ->
-                when (tab) {
-                    DashboardTab.HOME -> HomeScreen(
-                        cards = visibleCards,
-                        customers = customers,
-                        profileName = profileName,
-                        driveOperationMessage = driveOperationMessage,
-                        modifier = Modifier.padding(padding),
-                        onOpenSettings = onOpenSettings
-                    )
+            when (currentScreen) {
+                DashboardTab.HOME -> HomeScreen(
+                    vm = vm,
+                    profileName = profileName,
+                    photoUrl = photoUrl,
+                    modifier = Modifier.padding(padding)
+                )
 
-                    DashboardTab.ACCOUNTS -> AccountsScreen(
-                        cards = visibleCards,
-                        vm = vm,
-                        modifier = Modifier.padding(padding),
-                        onOpenSettings = onOpenSettings,
-                        onOpenAccount = onOpenAccount
-                    )
+                DashboardTab.ACCOUNTS -> AccountsScreen(
+                    vm = vm,
+                    modifier = Modifier.padding(padding),
+                    onOpenAccount = onOpenAccount
+                )
 
-                    DashboardTab.CUSTOMERS -> CustomersScreen(
-                        selectedAccountIds = selectedAccountIds,
-                        vm = vm,
-                        modifier = Modifier.padding(padding),
-                        onOpenSettings = onOpenSettings,
-                        onOpenCustomer = onOpenCustomer
-                    )
+                DashboardTab.CUSTOMERS -> CustomersScreen(
+                    selectedAccountIds = selectedAccountIds,
+                    vm = vm,
+                    modifier = Modifier.padding(padding),
+                    onOpenCustomer = onOpenCustomer
+                )
 
-                    DashboardTab.EMI_SCHEDULE -> EmiScheduleScreen(
-                        customers = customers,
-                        modifier = Modifier.padding(padding)
-                    )
-                }
+                DashboardTab.EMI_SCHEDULE -> EmiScheduleScreen(
+                    vm = vm,
+                    modifier = Modifier.padding(padding)
+                )
+
+                DashboardTab.SETTINGS -> SettingsContent(
+                    settingsState = settingsState,
+                    profile = profile,
+                    securityState = securityState,
+                    lockedAccountIds = lockedAccountIds,
+                    backupStatusMessage = backupStatusMessage,
+                    isBackupOperationInProgress = isBackupOperationInProgress,
+                    lastDriveBackupTime = lastDriveBackupTime,
+                    lastDriveRestoreTime = lastDriveRestoreTime,
+                    onThemeModeSelected = onThemeModeSelected,
+                    onAccountSelectionChanged = onAccountSelectionChanged,
+                    onLockEnabledChanged = onLockEnabledChanged,
+                    onBiometricEnabledChanged = onBiometricEnabledChanged,
+                    onEditProfile = onEditProfile,
+                    onOpenSecuritySetup = onOpenSecuritySetup,
+                    onBackupToDrive = onBackupToDrive,
+                    onRestoreFromDrive = onRestoreFromDrive,
+                    onDriveBackup = onDriveBackup,
+                    onDriveRestore = onDriveRestore,
+                    isDriveOperationInProgress = isDriveOperationInProgress,
+                    driveBackupStatusMessage = driveBackupStatusMessage,
+                    onLogout = onLogout,
+                    modifier = Modifier.padding(padding)
+                )
             }
         }
     }
@@ -199,8 +202,6 @@ private fun DashboardBottomBar(
     currentScreen: DashboardTab,
     onTabSelected: (DashboardTab) -> Unit
 ) {
-    val springSpec = spring<Float>(dampingRatio = 0.5f, stiffness = 500f)
-
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -221,49 +222,36 @@ private fun DashboardBottomBar(
         ) {
             DashboardTabs.forEach { item ->
                 val selected = currentScreen == item.tab
-                val animatedScale by animateFloatAsState(
-                    targetValue = if (selected) 1.15f else 1f,
-                    animationSpec = springSpec,
-                    label = "iconScale"
-                )
-                val animatedBgAlpha by animateFloatAsState(
-                    targetValue = if (selected) 0.14f else 0f,
-                    animationSpec = tween(250),
-                    label = "bgAlpha"
-                )
-                val animatedColor: Color by animateColorAsState(
-                    targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    animationSpec = tween(250),
-                    label = "iconColor"
-                )
+                val containerColor = if (selected) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                } else {
+                    Color.Transparent
+                }
+                val contentColor = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
 
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(18.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = animatedBgAlpha))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { onTabSelected(item.tab) }
+                        .background(containerColor)
+                        .clickable { onTabSelected(item.tab) }
                         .padding(vertical = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .scale(animatedScale)
-                    ) {
-                        Icon(
-                            imageVector = item.icon,
-                            contentDescription = item.label,
-                            tint = animatedColor
-                        )
-                    }
+                    Icon(
+                        imageVector = item.icon,
+                        contentDescription = item.label,
+                        tint = contentColor
+                    )
                     Text(
                         text = item.label,
                         style = MaterialTheme.typography.labelSmall,
-                        color = animatedColor,
+                        color = contentColor,
                         maxLines = 1
                     )
                 }
@@ -282,89 +270,88 @@ private data class PersonSummary(
 
 @Composable
 fun HomeScreen(
-    cards: List<CardSummary>,
-    customers: List<CustomerSummary>,
+    vm: MainViewModel,
     profileName: String,
-    driveOperationMessage: String?,
-    modifier: Modifier = Modifier,
-    onOpenSettings: () -> Unit
+    photoUrl: String,
+    modifier: Modifier = Modifier
 ) {
-    val totalUsed = cards.sumOf { it.bill }
-    // totalPaid = what customers have paid = total used minus what is still outstanding
-    // (cards.pending is the owner's own payments to the bank, not customer payments)
-    val totalPaid = cards.sumOf { (it.bill - it.payable).coerceAtLeast(0.0) }
-    val totalBalance = cards.sumOf { it.payable }
+    val cards by vm.cards.collectAsState()
+    val customers by vm.customers.collectAsState()
+    val driveOperationMessage by vm.driveOperationMessage.collectAsState()
 
-    // Compute per-account breakdowns from customer transactions:
-    //   emiOutstandingByAccount — ALL unpaid EMI installments (past + current + future)
-    //   nonEmiDueByAccount      — unpaid non-EMI transactions only (shown as "Current Due")
-    val emiOutstandingByAccount = remember(customers) {
-        val map = mutableMapOf<String, Double>()
-        customers.forEach { customer ->
-            customer.transactions.forEach { t ->
-                if (t.accountKind == AccountKind.PERSON) return@forEach
-                if (!t.isEmi) return@forEach
-                val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
-                if (due <= 0.0) return@forEach
-                map[t.accountId] = (map[t.accountId] ?: 0.0) + due
-            }
-        }
-        map
+    val usedAccountIds = remember(customers) {
+        val set = mutableSetOf<String>()
+        customers.forEach { c -> c.transactions.forEach { set.add(it.accountId) } }
+        set
+    }
+    val visibleCards = remember(cards, usedAccountIds) {
+        if (usedAccountIds.isEmpty()) emptyList()
+        else cards.filter { it.id in usedAccountIds }
     }
 
-    val nonEmiDueByAccount = remember(customers) {
-        val map = mutableMapOf<String, Double>()
-        customers.forEach { customer ->
-            customer.transactions.forEach { t ->
-                if (t.accountKind == AccountKind.PERSON) return@forEach
-                if (t.isEmi) return@forEach // EMIs go to emiOutstandingByAccount
-                if (t.isScheduledForFutureMonth()) return@forEach
-                val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
-                if (due <= 0.0) return@forEach
-                map[t.accountId] = (map[t.accountId] ?: 0.0) + due
-            }
-        }
-        map
+    data class CardTotals(val used: Double, val paid: Double, val balance: Double)
+    val cardTotals = remember(visibleCards) {
+        var u = 0.0; var p = 0.0; var b = 0.0
+        for (c in visibleCards) { u += c.bill; p += (c.bill - c.payable).coerceAtLeast(0.0); b += c.payable }
+        CardTotals(u, p, b)
     }
 
-    // Aggregate person transactions across all customers
-    val personSummaries = remember(customers) {
-        val map = linkedMapOf<String, Triple<String, Double, Double>>() // id -> (name, used, due)
+    data class CustomerAgg(
+        val emiOutstandingByAccount: Map<String, Double>,
+        val nonEmiDueByAccount: Map<String, Double>,
+        val personSummaries: List<PersonSummary>
+    )
+    val customerAgg = remember(customers) {
+        val emiMap = mutableMapOf<String, Double>()
+        val nonEmiMap = mutableMapOf<String, Double>()
+        val personMap = linkedMapOf<String, Triple<String, Double, Double>>()
         customers.forEach { customer ->
-            customer.transactions
-                .filter { it.accountKind == AccountKind.PERSON && it.isVisibleInTransactions() }
-                .forEach { txn ->
-                    val key = txn.accountId
-                    val name = txn.personName.ifBlank { txn.accountName }
-                    val used = txn.amount
-                    val due = if (txn.isSettled) 0.0 else (txn.amount - txn.partialPaidAmount).coerceAtLeast(0.0)
-                    val existing = map[key]
-                    if (existing == null) {
-                        map[key] = Triple(name, used, due)
-                    } else {
-                        map[key] = Triple(existing.first, existing.second + used, existing.third + due)
+            customer.transactions.forEach { t ->
+                if (t.accountKind == AccountKind.PERSON) {
+                    if (t.isVisibleInTransactions()) {
+                        val key = t.accountId
+                        val name = t.personName.ifBlank { t.accountName }
+                        val used = t.amount
+                        val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
+                        val existing = personMap[key]
+                        personMap[key] = if (existing == null) Triple(name, used, due)
+                            else Triple(existing.first, existing.second + used, existing.third + due)
                     }
+                } else if (!t.isEmi) {
+                    if (!t.isScheduledForFutureMonth()) {
+                        val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
+                        if (due > 0.0) nonEmiMap[t.accountId] = (nonEmiMap[t.accountId] ?: 0.0) + due
+                    }
+                } else {
+                    val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
+                    if (due > 0.0) emiMap[t.accountId] = (emiMap[t.accountId] ?: 0.0) + due
                 }
+            }
         }
-        map.entries.map { (id, v) -> PersonSummary(id, v.first, v.second, v.third) }
-            .sortedByDescending { it.totalDue }
+        CustomerAgg(
+            emiOutstandingByAccount = emiMap,
+            nonEmiDueByAccount = nonEmiMap,
+            personSummaries = personMap.entries
+                .map { (id, v) -> PersonSummary(id, v.first, v.second, v.third) }
+                .sortedByDescending { it.totalDue }
+        )
     }
 
-    val availableKinds = remember(cards, personSummaries) {
-        val kinds = cards.map { it.accountKind }.toMutableList()
-        if (personSummaries.isNotEmpty() && AccountKind.PERSON !in kinds) kinds.add(AccountKind.PERSON)
+    val availableKinds = remember(visibleCards, customerAgg.personSummaries) {
+        val kinds = visibleCards.map { it.accountKind }.toMutableList()
+        if (customerAgg.personSummaries.isNotEmpty() && AccountKind.PERSON !in kinds) kinds.add(AccountKind.PERSON)
         kinds.distinct()
     }
     var selectedActivityKindName by rememberSaveable { mutableStateOf("ALL") }
     var isFilterOpen by rememberSaveable { mutableStateOf(false) }
 
     val activityCards = when (selectedActivityKindName) {
-        "ALL" -> cards
+        "ALL" -> visibleCards
         AccountKind.PERSON.name -> emptyList()
-        else -> cards.filter { it.accountKind.name == selectedActivityKindName }
+        else -> visibleCards.filter { it.accountKind.name == selectedActivityKindName }
     }
     val activityPersons = when (selectedActivityKindName) {
-        "ALL", AccountKind.PERSON.name -> personSummaries
+        "ALL", AccountKind.PERSON.name -> customerAgg.personSummaries
         else -> emptyList()
     }
 
@@ -376,21 +363,22 @@ fun HomeScreen(
         item {
             HomeGreetingHeader(
                 profileName = profileName,
-                onOpenSettings = onOpenSettings
+                photoUrl = photoUrl
             )
         }
 
-        if (!driveOperationMessage.isNullOrBlank()) {
+        val driveMsg = driveOperationMessage
+        if (!driveMsg.isNullOrBlank()) {
             item {
-                DriveOperationCard(message = driveOperationMessage)
+                DriveOperationCard(message = driveMsg)
             }
         }
 
         item {
             HeroPanel(
                 title = "Outstanding Balance",
-                amount = formatMoney(totalBalance),
-                subtitle = "${cards.size} active account(s) currently contributing to your ledger flow."
+                amount = formatMoney(cardTotals.balance),
+                subtitle = "${visibleCards.size} active account(s) currently contributing to your ledger flow."
             )
         }
 
@@ -399,7 +387,7 @@ fun HomeScreen(
                 first = { itemModifier ->
                     MetricPill(
                         label = "Total Used",
-                        value = formatMoney(totalUsed),
+                        value = formatMoney(cardTotals.used),
                         color = warningColor(),
                         modifier = itemModifier
                     )
@@ -407,7 +395,7 @@ fun HomeScreen(
                 second = { itemModifier ->
                     MetricPill(
                         label = "Total Paid",
-                        value = formatMoney(totalPaid),
+                        value = formatMoney(cardTotals.paid),
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = itemModifier
                     )
@@ -505,18 +493,12 @@ fun HomeScreen(
                 }
             }
         } else {
-            itemsIndexed(activityCards.sortedByDescending { it.payable }.take(6), key = { _, c -> c.id }) { idx, card ->
-                AnimatedVisibility(
-                    visible = true,
-                    enter = fadeIn(tween(300 + idx * 50)) + slideInVertically(tween(300 + idx * 50)) { it / 4 },
-                    label = "cardAnim"
-                ) {
-                    HomeActivityCard(
-                        card = card,
-                        currentDue = nonEmiDueByAccount[card.id] ?: 0.0,
-                        emiOutstanding = emiOutstandingByAccount[card.id] ?: 0.0
-                    )
-                }
+            items(activityCards.sortedByDescending { it.payable }.take(6), key = { it.id }) { card ->
+                HomeActivityCard(
+                    card = card,
+                    currentDue = customerAgg.nonEmiDueByAccount[card.id] ?: 0.0,
+                    emiOutstanding = customerAgg.emiOutstandingByAccount[card.id] ?: 0.0
+                )
             }
             // FIX-20: Show "Show all" link when list is truncated
             if (activityCards.size > 6) {
@@ -533,14 +515,8 @@ fun HomeScreen(
                     }
                 }
             }
-            itemsIndexed(activityPersons.take(6), key = { _, p -> "person_${p.personId}" }) { idx, person ->
-                AnimatedVisibility(
-                    visible = true,
-                    enter = fadeIn(tween(300 + idx * 50)) + slideInVertically(tween(300 + idx * 50)) { it / 4 },
-                    label = "personCardAnim"
-                ) {
-                    HomePersonCard(person = person)
-                }
+            items(activityPersons.take(6), key = { "person_${it.personId}" }) { person ->
+                HomePersonCard(person = person)
             }
             if (activityPersons.size > 6) {
                 item {
@@ -604,7 +580,7 @@ private fun DriveOperationCard(message: String) {
 @Composable
 private fun HomeGreetingHeader(
     profileName: String,
-    onOpenSettings: () -> Unit
+    photoUrl: String
 ) {
     val greeting = remember {
         when (LocalTime.now().hour) {
@@ -641,19 +617,32 @@ private fun HomeGreetingHeader(
             )
         }
 
-        IconButton(
-            onClick = onOpenSettings,
+        Box(
             modifier = Modifier
                 .size(46.dp)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
                 .border(1.dp, Color.White.copy(alpha = 0.6f), CircleShape)
         ) {
-            Text(
-                text = initials,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary
-            )
+            if (photoUrl.isNotBlank()) {
+                AsyncImage(
+                    model = photoUrl,
+                    contentDescription = "Profile photo",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = initials,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
         }
     }
 }
@@ -870,10 +859,10 @@ private data class EmiGroupRow(
 
 @Composable
 fun EmiScheduleScreen(
-    customers: List<CustomerSummary>,
     modifier: Modifier = Modifier,
     vm: MainViewModel = viewModel()
 ) {
+    val customers by vm.customers.collectAsState()
     val today = remember { LocalDate.now() }
 
     // Collect every EMI instalment across all customers, only from groups

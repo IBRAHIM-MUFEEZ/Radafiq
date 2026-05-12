@@ -121,7 +121,7 @@ export default function AppLock() {
     justifyContent: 'center',
     padding: '2rem 1rem',
     boxSizing: 'border-box',
-    fontFamily: "'Inter', system-ui, sans-serif",
+    fontFamily: "'Tonus Text Semi Bold', system-ui, sans-serif",
   };
 
   const card: React.CSSProperties = {

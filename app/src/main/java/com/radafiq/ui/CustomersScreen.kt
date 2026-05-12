@@ -45,7 +45,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material3.AlertDialog
@@ -102,6 +101,7 @@ import com.radafiq.data.models.SplitEntry
 import com.radafiq.viewmodel.DraftTransactionState
 import com.radafiq.viewmodel.MainViewModel
 import java.time.LocalDate
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 // Count split groups as 1 logical transaction each
@@ -144,7 +144,6 @@ fun CustomersScreen(
     selectedAccountIds: Set<String>,
     vm: MainViewModel = viewModel(),
     modifier: Modifier = Modifier,
-    onOpenSettings: () -> Unit = {},
     onOpenCustomer: (String) -> Unit = {}
 ) {
     val customers by vm.customers.collectAsState()
@@ -273,9 +272,6 @@ fun CustomersScreen(
                                 }
                             ) {
                                 Text(if (viewMode == CustomerViewMode.ACTIVE) "Recycle Bin" else "Customers")
-                            }
-                            IconButton(onClick = onOpenSettings) {
-                                Icon(Icons.Default.Settings, contentDescription = "Settings")
                             }
                         }
                     }
@@ -630,27 +626,29 @@ fun CustomerCard(
                 if (grouped.isEmpty()) {
                     EmptyInlineState("No transactions for this selection.")
                 } else {
-                    // Compute running balance from the filtered list's total due (not customer.balance
-                    // which may include transactions excluded by the current filter)
-                    val filteredDue = grouped.sumOf { group ->
-                        group.splits.sumOf { split ->
-                            if (split.isSettled) 0.0
-                            else (split.amount - split.partialPaidAmount).coerceAtLeast(0.0)
+                    val displayData = remember(grouped) {
+                        val filteredDue = grouped.sumOf { group ->
+                            group.splits.sumOf { split ->
+                                if (split.isSettled) 0.0
+                                else (split.amount - split.partialPaidAmount).coerceAtLeast(0.0)
+                            }
                         }
-                    }
-                    var runningBal = filteredDue
-                    val groupsWithBal = grouped.map { group ->
-                        val groupDue = group.splits.sumOf { split ->
-                            if (split.isSettled) 0.0
-                            else (split.amount - split.partialPaidAmount).coerceAtLeast(0.0)
+                        var runningBal = filteredDue
+                        val groupsWithBal = grouped.map { group ->
+                            val groupDue = group.splits.sumOf { split ->
+                                if (split.isSettled) 0.0
+                                else (split.amount - split.partialPaidAmount).coerceAtLeast(0.0)
+                            }
+                            val entry = group to runningBal
+                            runningBal -= groupDue
+                            entry
                         }
-                        val entry = group to runningBal
-                        runningBal -= groupDue
-                        entry
+                        val byDate = groupsWithBal.groupBy { (g, _) -> g.transactionDate }
+                        val sortedDates = byDate.keys.sortedDescending()
+                        Pair(byDate, sortedDates)
                     }
-                    // Date-grouped rendering
-                    val byDate = groupsWithBal.groupBy { (g, _) -> g.transactionDate }
-                    byDate.keys.sortedDescending().forEach { date ->
+                    val (byDate, sortedDates) = displayData
+                    sortedDates.forEach { date ->
                         DateSeparatorChip(date = date, today = today)
                         byDate[date]?.forEach { (group, bal) ->
                             if (group.splits.size > 1) {
@@ -963,6 +961,31 @@ fun CustomerDetailScreen(
         buildGroupedTransactions(visible)
     }
     val groupedTransactions = filteredTransactions
+
+    val customerDetailDisplayData = remember(filteredTransactions) {
+        val fd = filteredTransactions.sumOf { group ->
+            group.splits.sumOf { split ->
+                if (split.isSettled) 0.0
+                else (split.amount - split.partialPaidAmount).coerceAtLeast(0.0)
+            }
+        }
+        val gwb: List<Pair<TransactionGroup, Double>> = run {
+            var runningBal = fd
+            filteredTransactions.map { group ->
+                val groupDue = group.splits.sumOf { split ->
+                    if (split.isSettled) 0.0
+                    else (split.amount - split.partialPaidAmount).coerceAtLeast(0.0)
+                }
+                val entry = group to runningBal
+                runningBal -= groupDue
+                entry
+            }
+        }
+        val byDate = gwb.groupBy { (group, _) -> group.transactionDate }
+        val sortedDates = byDate.keys.sortedDescending()
+        Triple(gwb, byDate, sortedDates)
+    }
+    val customerToday = remember { LocalDate.now() }
 
     // Account breakdown — group all visible transactions by account name+kind
     data class AccountBreakdown(
@@ -1328,37 +1351,12 @@ fun CustomerDetailScreen(
                         }
                     }
                 } else {
-                    // Compute running balance from the filtered list's total due (not customer.balance
-                    // which may include transactions excluded by the current filter)
-                    val filteredDue = filteredTransactions.sumOf { group ->
-                        group.splits.sumOf { split ->
-                            if (split.isSettled) 0.0
-                            else (split.amount - split.partialPaidAmount).coerceAtLeast(0.0)
-                        }
-                    }
-                    val groupsWithBalance: List<Pair<TransactionGroup, Double>> = run {
-                        var runningBal = filteredDue
-                        filteredTransactions.map { group ->
-                            val groupDue = group.splits.sumOf { split ->
-                                if (split.isSettled) 0.0
-                                else (split.amount - split.partialPaidAmount).coerceAtLeast(0.0)
-                            }
-                            val entry = group to runningBal
-                            // After this group, balance was lower by the due amount of this group
-                            runningBal -= groupDue
-                            entry
-                        }
-                    }
-
-                    // Group by date for date-header separators
-                    val byDate = groupsWithBalance.groupBy { (group, _) -> group.transactionDate }
-                    val sortedDates = byDate.keys.sortedDescending()
-                    val today = LocalDate.now()
+                    val (_, byDate, sortedDates) = customerDetailDisplayData
 
                     sortedDates.forEach { date ->
                         // Date header
                         item(key = "date_$date") {
-                            DateSeparatorChip(date = date, today = today)
+                            DateSeparatorChip(date = date, today = customerToday)
                         }
                         // Transactions under this date
                         val groupsForDate = byDate[date] ?: emptyList()
@@ -2123,12 +2121,14 @@ fun TransactionEditorDialog(
     }
 
     // Persist draft to ViewModel on every state change (new transactions only)
+    // Debounced to avoid Firestore writes on every keystroke
     if (transaction == null) {
         LaunchedEffect(
             transactionName, selectedKind, selectedAccountId, personName,
             amountExpression, transactionDate, splitEnabled, splitEntries,
             emiEnabled, emiMonths, emiFirstMonthOverride, emiManualDates, emiDateOverrides
         ) {
+            delay(500)
             vm.saveDraftTransaction(
                 DraftTransactionState(
                     customerId = customer.id,

@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
@@ -56,15 +55,23 @@ import kotlin.math.abs
 
 @Composable
 fun AccountsScreen(
-    cards: List<CardSummary>,
     vm: MainViewModel = viewModel(),
     modifier: Modifier = Modifier,
-    onOpenSettings: () -> Unit = {},
     onOpenAccount: (String) -> Unit = {}
 ) {
+    val allCards by vm.cards.collectAsState()
+    val customers by vm.customers.collectAsState()
+    val usedAccountIds = remember(customers) {
+        val set = mutableSetOf<String>()
+        customers.forEach { c -> c.transactions.forEach { set.add(it.accountId) } }
+        set
+    }
+    val cards = remember(allCards, usedAccountIds) {
+        if (usedAccountIds.isEmpty()) emptyList()
+        else allCards.filter { it.id in usedAccountIds }
+    }
     val creditCards = cards.filter { it.accountKind == AccountKind.CREDIT_CARD }
     val bankAccounts = cards.filter { it.accountKind == AccountKind.BANK_ACCOUNT }
-    val customers by vm.customers.collectAsState()
 
     // Aggregate person transactions for the Accounts tab
     data class PersonEntry(val accountId: String, val name: String, val used: Double, val due: Double)
@@ -97,12 +104,7 @@ fun AccountsScreen(
         item {
             PageHeader(
                 title = "Accounts",
-                subtitle = "Monitor banks, credit cards, dues, and usage.",
-                trailing = {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                    }
-                }
+                subtitle = "Monitor banks, credit cards, dues, and usage."
             )
         }
 
@@ -718,7 +720,8 @@ fun CreditCardDueDialog(
 fun AccountDetailScreen(
     accountId: String,
     vm: MainViewModel = viewModel(),
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenCustomer: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val dueReminderScheduler = remember(context) { DueReminderScheduler(context) }
@@ -913,7 +916,8 @@ fun AccountDetailScreen(
                             customer = customer,
                             usedAmount = used,
                             dueAmount = due,
-                            accentColor = accentColor
+                            accentColor = accentColor,
+                            onClick = { onOpenCustomer(customer.id) }
                         )
                     }
                 }
@@ -927,11 +931,14 @@ private fun AccountCustomerRow(
     customer: CustomerSummary,
     usedAmount: Double,
     dueAmount: Double,
-    accentColor: androidx.compose.ui.graphics.Color
+    accentColor: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit = {}
 ) {
     FlowCard(accentColor = accentColor) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onClick() },
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {

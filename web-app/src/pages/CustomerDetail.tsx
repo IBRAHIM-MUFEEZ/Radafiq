@@ -845,10 +845,13 @@ export default function CustomerDetail() {
                         Partial Pay
                       </button>
                       <button
-                        className="btn btn-sm"
                         style={{
+                          borderRadius: 10,
                           fontSize: '0.75rem', padding: '4px 12px',
-                          background: accent, color: '#fff', border: 'none',
+                          background: 'transparent',
+                          color: accent,
+                          border: `1.5px solid color-mix(in srgb, ${accent} 60%, transparent)`,
+                          cursor: 'pointer',
                         }}
                         onClick={async () => {
                           setAccountPaySavingId(b.accountId);

@@ -49,9 +49,8 @@ import com.radafiq.data.security.AppSecurityState
 import com.radafiq.data.settings.AppSettingsState
 import com.radafiq.data.settings.AppThemeMode
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(
+fun SettingsContent(
     settingsState: AppSettingsState,
     profile: UserProfile?,
     securityState: AppSecurityState,
@@ -73,7 +72,7 @@ fun SettingsScreen(
     isDriveOperationInProgress: Boolean,
     driveBackupStatusMessage: String,
     onLogout: () -> Unit,
-    onNavigateBack: () -> Unit = {}
+    modifier: Modifier = Modifier
 ) {
     val backupStatusColor = when {
         backupStatusMessage.contains("failed", ignoreCase = true) ||
@@ -83,40 +82,21 @@ fun SettingsScreen(
         else -> MaterialTheme.colorScheme.primary
     }
 
-    RadafiqBackground {
-        Scaffold(
-            containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.12f),
-            topBar = {
-                TopAppBar(
-                    title = { Text("Settings") },
-                    navigationIcon = {
-                        IconButton(onClick = onNavigateBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.12f),
-                        titleContentColor = MaterialTheme.colorScheme.onBackground
-                    )
-                )
-            }
-        ) { paddingValues ->
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-                    .padding(horizontal = 16.dp),
-                contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                item {
-                    PageHeader(
-                        title = "Settings",
-                        subtitle = "Manage profile, security, local backups, and the account configuration used across the app."
-                    )
-                }
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            PageHeader(
+                title = "Settings",
+                subtitle = "Manage profile, security, local backups, and the account configuration used across the app."
+            )
+        }
 
-                item {
+        item {
                     FlowCard(accentColor = MaterialTheme.colorScheme.primary) {
                         Text(
                             text = "Profile",
@@ -395,8 +375,76 @@ fun SettingsScreen(
                         )
                     }
                 }
-
+    }
+}
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(
+    settingsState: AppSettingsState,
+    profile: UserProfile?,
+    securityState: AppSecurityState,
+    lockedAccountIds: Set<String>,
+    backupStatusMessage: String,
+    isBackupOperationInProgress: Boolean,
+    lastDriveBackupTime: String?,
+    lastDriveRestoreTime: String?,
+    onThemeModeSelected: (AppThemeMode) -> Unit,
+    onAccountSelectionChanged: (String, Boolean) -> Unit,
+    onLockEnabledChanged: (Boolean) -> Unit,
+    onBiometricEnabledChanged: (Boolean) -> Unit,
+    onEditProfile: () -> Unit,
+    onOpenSecuritySetup: () -> Unit,
+    onBackupToDrive: () -> Unit,
+    onRestoreFromDrive: () -> Unit,
+    onDriveBackup: () -> Unit,
+    onDriveRestore: () -> Unit,
+    isDriveOperationInProgress: Boolean,
+    driveBackupStatusMessage: String,
+    onLogout: () -> Unit,
+    onNavigateBack: () -> Unit = {}
+) {
+    RadafiqBackground {
+        Scaffold(
+            containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.12f),
+            topBar = {
+                TopAppBar(
+                    title = { Text("Settings") },
+                    navigationIcon = {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.12f),
+                        titleContentColor = MaterialTheme.colorScheme.onBackground
+                    )
+                )
             }
+        ) { paddingValues ->
+            SettingsContent(
+                settingsState = settingsState,
+                profile = profile,
+                securityState = securityState,
+                lockedAccountIds = lockedAccountIds,
+                backupStatusMessage = backupStatusMessage,
+                isBackupOperationInProgress = isBackupOperationInProgress,
+                lastDriveBackupTime = lastDriveBackupTime,
+                lastDriveRestoreTime = lastDriveRestoreTime,
+                onThemeModeSelected = onThemeModeSelected,
+                onAccountSelectionChanged = onAccountSelectionChanged,
+                onLockEnabledChanged = onLockEnabledChanged,
+                onBiometricEnabledChanged = onBiometricEnabledChanged,
+                onEditProfile = onEditProfile,
+                onOpenSecuritySetup = onOpenSecuritySetup,
+                onBackupToDrive = onBackupToDrive,
+                onRestoreFromDrive = onRestoreFromDrive,
+                onDriveBackup = onDriveBackup,
+                onDriveRestore = onDriveRestore,
+                isDriveOperationInProgress = isDriveOperationInProgress,
+                driveBackupStatusMessage = driveBackupStatusMessage,
+                onLogout = onLogout,
+                modifier = Modifier.padding(paddingValues)
+            )
         }
     }
 }

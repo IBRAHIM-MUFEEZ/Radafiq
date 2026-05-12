@@ -637,9 +637,65 @@ class MainActivity : FragmentActivity() {
                             DashboardScreen(
                                 navController = navController,
                                 selectedAccountIds = settingsState.selectedAccountIds,
-                                onOpenSettings = { navController.navigate("settings") },
                                 profileName = profile?.displayName.orEmpty(),
+                                photoUrl = profile?.photoUrl.orEmpty(),
                                 vm = mainViewModel,
+                                settingsState = settingsState,
+                                profile = profile,
+                                securityState = securityState,
+                                lockedAccountIds = lockedAccountIds,
+                                backupStatusMessage = backupStatusMessage,
+                                isBackupOperationInProgress = backupOperationInProgress,
+                                lastDriveBackupTime = settingsState.lastDriveBackupTime,
+                                lastDriveRestoreTime = settingsState.lastDriveRestoreTime,
+                                onThemeModeSelected = settingsRepository::setThemeMode,
+                                onAccountSelectionChanged = settingsRepository::setAccountSelected,
+                                onLockEnabledChanged = securityRepository::setLockEnabled,
+                                onBiometricEnabledChanged = securityRepository::setBiometricEnabled,
+                                onEditProfile = { navController.navigate("profile") },
+                                onOpenSecuritySetup = { navController.navigate("securitySetup") },
+                                onBackupToDrive = {
+                                    backupStatusMessage = "Choose where to save your backup."
+                                    externalDocumentFlowInProgress = true
+                                    runCatching {
+                                        exportBackupLauncher.launch(defaultBackupFileName())
+                                    }.onFailure { throwable ->
+                                        externalDocumentFlowInProgress = false
+                                        backupStatusMessage = "Unable to open export dialog: ${throwable.localizedMessage ?: "unknown error"}"
+                                    }
+                                },
+                                onRestoreFromDrive = {
+                                    backupStatusMessage = "Select a backup file to import."
+                                    externalDocumentFlowInProgress = true
+                                    runCatching {
+                                        importBackupLauncher.launch(
+                                            arrayOf(
+                                                "application/json",
+                                                "application/octet-stream",
+                                                "text/plain",
+                                                "*/*"
+                                            )
+                                        )
+                                    }.onFailure { throwable ->
+                                        externalDocumentFlowInProgress = false
+                                        backupStatusMessage = "Unable to open import dialog: ${throwable.localizedMessage ?: "unknown error"}"
+                                    }
+                                },
+                                onDriveBackup = { launchDriveAction("backup") },
+                                onDriveRestore = { launchDriveAction("restore") },
+                                isDriveOperationInProgress = driveOperationInProgress,
+                                driveBackupStatusMessage = driveStatusMessage,
+                                onLogout = {
+                                    coroutineScope.launch {
+                                        profileRepository.signOut()
+                                        GoogleSignInHelper.signOut(applicationContext)
+                                        LocalIdentityRepository.resetIdentity(applicationContext)
+                                        settingsRepository.reloadForCurrentUser()
+                                        mainViewModel.reinitialize()
+                                        profileRepository.observeCurrentUserProfile()
+                                        navController.popBackStack()
+                                    }
+                                },
                                 onOpenCustomer = { customerId ->
                                     navController.navigate("customerDetail/$customerId")
                                 },
@@ -693,7 +749,10 @@ class MainActivity : FragmentActivity() {
                             AccountDetailScreen(
                                 accountId = accountId,
                                 vm = mainViewModel,
-                                onBack = { navController.popBackStack() }
+                                onBack = { navController.popBackStack() },
+                                onOpenCustomer = { customerId ->
+                                    navController.navigate("customerDetail/$customerId")
+                                }
                             )
                         }
 
