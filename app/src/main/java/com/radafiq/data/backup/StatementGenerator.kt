@@ -283,15 +283,22 @@ class StatementGenerator(private val context: Context) {
         return (lineY + 50f).toInt()
     }
 
-    // ── Radafiq logo: loads logo.png from assets ──────────────────────────────
+    // ── Radafiq logo: loads logo-Photoroom.png from assets ─────────────────
     private fun drawRadafiqLogo(canvas: Canvas, x: Float, y: Float, size: Float) {
         val bitmap = runCatching {
-            context.assets.open("logo.png").use { stream ->
+            context.assets.open("logo-Photoroom.png").use { stream ->
                 android.graphics.BitmapFactory.decodeStream(stream)
             }
         }.getOrNull() ?: return
 
-        val dst = RectF(x, y, x + size, y + size)
+        val bw = bitmap.width.toFloat()
+        val bh = bitmap.height.toFloat()
+        val scale = minOf(size / bw, size / bh)
+        val w = bw * scale
+        val h = bh * scale
+        val offsetX = (size - w) / 2f
+        val offsetY = (size - h) / 2f
+        val dst = RectF(x + offsetX, y + offsetY, x + offsetX + w, y + offsetY + h)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         canvas.drawBitmap(bitmap, null, dst, paint)
     }

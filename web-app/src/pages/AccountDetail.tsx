@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatMoney, formatDate } from '../utils/format';
 import { isVisibleInTransactions } from '../types/models';
+import AnimatedMoney from '../components/AnimatedMoney';
 
 export default function AccountDetail() {
   const { accountId } = useParams<{ accountId: string }>();
@@ -71,17 +72,17 @@ export default function AccountDetail() {
         <div className="two-col" style={{ marginBottom: '0.75rem' }}>
           <div className="metric-pill">
             <span className="label">Total Used</span>
-            <span className="value" style={{ color: accentColor }}>{formatMoney(card.bill)}</span>
+            <span className="value" style={{ color: accentColor }}><AnimatedMoney value={card.bill} /></span>
           </div>
           <div className="metric-pill">
             <span className="label">Personal Paid</span>
-            <span className="value" style={{ color: 'var(--secondary)' }}>{formatMoney(card.pending)}</span>
+            <span className="value" style={{ color: 'var(--secondary)' }}><AnimatedMoney value={card.pending} /></span>
           </div>
         </div>
 
         <div className="accent-row">
           <span className="accent-label">Balance</span>
-          <span className="accent-value" style={{ color: accentColor }}>{formatMoney(card.payable)}</span>
+          <span className="accent-value" style={{ color: accentColor }}><AnimatedMoney value={card.payable} /></span>
         </div>
 
         {card.accountKind === 'credit_card' && (
@@ -107,11 +108,11 @@ export default function AccountDetail() {
                 <div className="two-col" style={{ marginBottom: '0.75rem' }}>
                   <div className="metric-pill">
                     <span className="label">Due Amount</span>
-                    <span className="value" style={{ color: remainingDue > 0 ? 'var(--warning)' : 'var(--green)' }}>{formatMoney(card.dueAmount)}</span>
+                    <span className="value" style={{ color: remainingDue > 0 ? 'var(--warning)' : 'var(--green)' }}><AnimatedMoney value={card.dueAmount} /></span>
                   </div>
                   <div className="metric-pill">
                     <span className="label">Remaining</span>
-                    <span className="value" style={{ color: remainingDue > 0 ? 'var(--warning)' : 'var(--green)' }}>{formatMoney(Math.abs(remainingDue))}</span>
+                    <span className="value" style={{ color: remainingDue > 0 ? 'var(--warning)' : 'var(--green)' }}><AnimatedMoney value={Math.abs(remainingDue)} /></span>
                   </div>
                 </div>
                 <div className="progress-bar" style={{ marginBottom: 8 }}>
@@ -145,10 +146,10 @@ export default function AccountDetail() {
                 <div className="avatar">{customer.name.slice(0, 2).toUpperCase()}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="truncate font-semibold">{customer.name}</div>
-                  <div className="text-muted text-sm">Used {formatMoney(used)}</div>
+                  <div className="text-muted text-sm">Used <AnimatedMoney value={used} /></div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontWeight: 700, color: due > 0 ? 'var(--warning)' : 'var(--primary)' }}>{formatMoney(due)}</div>
+                  <div style={{ fontWeight: 700, color: due > 0 ? 'var(--warning)' : 'var(--primary)' }}><AnimatedMoney value={due} /></div>
                   <div className="text-muted text-xs">{due > 0 ? 'Due' : 'Settled'}</div>
                 </div>
               </div>

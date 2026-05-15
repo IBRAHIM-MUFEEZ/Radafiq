@@ -1,7 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { formatMoney } from '../utils/format';
 import { CardSummary, CustomerSummary } from '../types/models';
+import AnimatedMoney from '../components/AnimatedMoney';
+import { fadeInUp, staggerFadeInUp } from '../utils/animations';
 
 type Metric = 'USAGE' | 'PAID' | 'OUTSTANDING';
 
@@ -33,6 +35,7 @@ function customerMetricValue(customer: CustomerSummary, metric: Metric): number 
 
 export default function AnalyticsPage() {
   const { cards, customers } = useApp();
+  const pageRef = useRef<HTMLDivElement>(null);
   const [accountKindFilter, setAccountKindFilter] = useState<'credit_card' | 'bank_account'>('credit_card');
   const [accountMetric, setAccountMetric] = useState<Metric>('USAGE');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
@@ -52,6 +55,11 @@ export default function AnalyticsPage() {
   const totalPaid = visibleCards.reduce((s, c) => s + Math.max(0, c.bill - c.payable), 0);
   const totalBalance = visibleCards.reduce((s, c) => s + c.payable, 0);
 
+  useEffect(() => {
+    if (pageRef.current) fadeInUp(pageRef.current, 0, 400);
+    staggerFadeInUp('.analytics-card', 80, 'first', 400);
+  }, []);
+
   const filteredCards = visibleCards.filter(c => c.accountKind === accountKindFilter);
   const sortedCustomers = [...customers].sort((a, b) => a.name.localeCompare(b.name));
   // BUG-57 fix: derive selectedCustomer from state, default to first customer's id
@@ -59,7 +67,7 @@ export default function AnalyticsPage() {
   const selectedCustomer = sortedCustomers.find(c => c.id === effectiveCustomerId) ?? sortedCustomers[0];
 
   return (
-    <div className="page-content">
+    <div className="page-content" ref={pageRef}>
       <div style={{ marginBottom: '1.5rem' }}>
         <h2>Analytics</h2>
         <p className="text-muted text-sm" style={{ marginTop: 4 }}>Inspect accounts and customers with quick metric filters.</p>
@@ -76,34 +84,34 @@ export default function AnalyticsPage() {
           {/* Overall summary */}
           {visibleCards.length > 0 && (
             <>
-              <div className="hero-panel" style={{ marginBottom: '1rem' }}>
+              <div className="hero-panel analytics-card" style={{ marginBottom: '1rem' }}>
                 <p style={{ fontSize: '0.8125rem', fontWeight: 600, opacity: 0.8, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>Total Balance</p>
-                <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: 4 }}>{formatMoney(totalBalance)}</h1>
-                <p style={{ fontSize: '0.875rem', opacity: 0.75 }}>Used {formatMoney(totalUsed)} minus paid {formatMoney(totalPaid)}</p>
+                <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: 4 }}><AnimatedMoney value={totalBalance} duration={800} /></h1>
+                <p style={{ fontSize: '0.875rem', opacity: 0.75 }}>Used <AnimatedMoney value={totalUsed} /> minus paid <AnimatedMoney value={totalPaid} /></p>
               </div>
 
-              <div className="flow-card" style={{ marginBottom: '1rem' }}>
+              <div className="flow-card analytics-card" style={{ marginBottom: '1rem' }}>
                 <h3 style={{ marginBottom: '1rem' }}>Overall Summary</h3>
                 <div className="two-col" style={{ marginBottom: '0.75rem' }}>
                   <div className="metric-pill">
                     <span className="label">Used</span>
-                    <span className="value text-primary">{formatMoney(totalUsed)}</span>
+                    <span className="value text-primary"><AnimatedMoney value={totalUsed} /></span>
                   </div>
                   <div className="metric-pill">
                     <span className="label">Paid</span>
-                    <span className="value" style={{ color: 'var(--secondary)' }}>{formatMoney(totalPaid)}</span>
+                    <span className="value" style={{ color: 'var(--secondary)' }}><AnimatedMoney value={totalPaid} /></span>
                   </div>
                 </div>
                 <div className="accent-row">
                   <span className="accent-label">Balance</span>
-                  <span className="accent-value" style={{ color: totalBalance > 0 ? 'var(--warning)' : 'var(--primary)' }}>{formatMoney(totalBalance)}</span>
+                  <span className="accent-value" style={{ color: totalBalance > 0 ? 'var(--warning)' : 'var(--primary)' }}><AnimatedMoney value={totalBalance} /></span>
                 </div>
               </div>
             </>
           )}
 
           {/* Account analytics */}
-          <div className="flow-card" style={{ marginBottom: '1rem' }}>
+          <div className="flow-card analytics-card" style={{ marginBottom: '1rem' }}>
             <h3 style={{ marginBottom: '1rem' }}>Account Analytics</h3>
 
             <div style={{ display: 'flex', gap: 8, marginBottom: '0.875rem', flexWrap: 'wrap' }}>
@@ -146,7 +154,7 @@ export default function AnalyticsPage() {
                   <div className="text-muted text-xs" style={{ marginBottom: 8 }}>{card.accountKind === 'credit_card' ? 'Credit Card' : 'Bank Account'}</div>
                   <div className="accent-row">
                     <span className="accent-label">{METRICS.find(m => m.value === accountMetric)?.label}</span>
-                    <span className="accent-value" style={{ color: 'var(--primary)' }}>{formatMoney(cardMetricValue(card, accountMetric))}</span>
+                    <span className="accent-value" style={{ color: 'var(--primary)' }}><AnimatedMoney value={cardMetricValue(card, accountMetric)} /></span>
                   </div>
                 </div>
               ))
@@ -155,7 +163,7 @@ export default function AnalyticsPage() {
 
           {/* Customer analytics */}
           {sortedCustomers.length > 0 && selectedCustomer && (
-            <div className="flow-card">
+            <div className="flow-card analytics-card">
               <h3 style={{ marginBottom: '1rem' }}>Customer Analytics</h3>
 
               <div className="form-group" style={{ marginBottom: '0.875rem' }}>
@@ -191,23 +199,23 @@ export default function AnalyticsPage() {
               <div className="two-col" style={{ marginBottom: '0.75rem' }}>
                 <div className="metric-pill">
                   <span className="label">Used</span>
-                  <span className="value text-primary">{formatMoney(selectedCustomer.totalAmount)}</span>
+                  <span className="value text-primary"><AnimatedMoney value={selectedCustomer.totalAmount} /></span>
                 </div>
                 <div className="metric-pill">
                   <span className="label">Paid</span>
-                  <span className="value" style={{ color: 'var(--secondary)' }}>{formatMoney(selectedCustomer.creditDueAmount)}</span>
+                  <span className="value" style={{ color: 'var(--secondary)' }}><AnimatedMoney value={selectedCustomer.creditDueAmount} /></span>
                 </div>
               </div>
 
               <div className="accent-row">
                 <span className="accent-label">{METRICS.find(m => m.value === customerMetric)?.label}</span>
                 <span className="accent-value" style={{ color: 'var(--primary)' }}>
-                  {formatMoney(customerMetricValue(selectedCustomer, customerMetric))}
+                  <AnimatedMoney value={customerMetricValue(selectedCustomer, customerMetric)} />
                 </span>
               </div>
 
               <p className="text-muted text-xs" style={{ marginTop: 8 }}>
-                Outstanding balance: {formatMoney(selectedCustomer.balance)}
+                Outstanding balance: <AnimatedMoney value={selectedCustomer.balance} />
               </p>
             </div>
           )}

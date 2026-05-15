@@ -523,8 +523,8 @@ fun CustomerCard(
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                    Text(
-                                        text = formatMoney(customer.balance),
+                                    AnimatedMoney(
+                                        value = customer.balance,
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = if (customer.balance > 0.0) {
@@ -561,7 +561,7 @@ fun CustomerCard(
                         first = { itemModifier ->
                             MetricPill(
                                 label = "Used",
-                                value = formatMoney(customer.totalAmount),
+                                amountValue = customer.totalAmount,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = itemModifier
                             )
@@ -569,7 +569,7 @@ fun CustomerCard(
                         second = { itemModifier ->
                             MetricPill(
                                 label = "Customer Paid",
-                                value = formatMoney(customer.creditDueAmount),
+                                amountValue = customer.creditDueAmount,
                                 color = MaterialTheme.colorScheme.secondary,
                                 modifier = itemModifier
                             )
@@ -580,7 +580,7 @@ fun CustomerCard(
 
                     AccentValueRow(
                         label = "Balance Remaining",
-                        value = formatMoney(customer.balance),
+                        amountValue = customer.balance,
                         color = if (customer.balance > 0.0) warningColor() else MaterialTheme.colorScheme.primary
                     )
 
@@ -887,8 +887,8 @@ fun CustomerListRow(
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = formatMoney(customer.balance),
+                AnimatedMoney(
+                    value = customer.balance,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = if (customer.balance > 0.0) warningColor() else MaterialTheme.colorScheme.primary
@@ -1149,19 +1149,19 @@ fun CustomerDetailScreen(
                     ) {
                         MetricPill(
                             label = "Used",
-                            value = formatMoney(customer.totalAmount),
+                            amountValue = customer.totalAmount,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f)
                         )
                         MetricPill(
                             label = "Paid",
-                            value = formatMoney(customer.creditDueAmount),
+                            amountValue = customer.creditDueAmount,
                             color = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.weight(1f)
                         )
                         MetricPill(
                             label = "Balance",
-                            value = formatMoney(customer.balance),
+                            amountValue = customer.balance,
                             color = if (customer.balance > 0.0) warningColor()
                                     else MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.weight(1f)
@@ -1174,7 +1174,7 @@ fun CustomerDetailScreen(
                     item {
                         AccentValueRow(
                             label = "Savings Balance",
-                            value = formatMoney(customer.savingsBalance),
+                            amountValue = customer.savingsBalance,
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -1251,8 +1251,8 @@ fun CustomerDetailScreen(
                                             }
                                         }
                                         Column(horizontalAlignment = Alignment.End) {
-                                            Text(
-                                                text = formatMoney(breakdown.totalUsed),
+                                            AnimatedMoney(
+                                                value = breakdown.totalUsed,
                                                 style = MaterialTheme.typography.bodySmall,
                                                 fontWeight = FontWeight.Bold,
                                                 color = accent
@@ -1643,7 +1643,7 @@ fun DeletedCustomerCard(
                 first = { itemModifier ->
                     MetricPill(
                         label = "Used",
-                        value = formatMoney(customer.totalAmount),
+                        amountValue = customer.totalAmount,
                         color = dangerColor(),
                         modifier = itemModifier
                     )
@@ -1651,7 +1651,7 @@ fun DeletedCustomerCard(
                 second = { itemModifier ->
                     MetricPill(
                         label = "Balance",
-                        value = formatMoney(customer.balance),
+                        amountValue = customer.balance,
                         color = warningColor(),
                         modifier = itemModifier
                     )
@@ -1903,62 +1903,15 @@ private fun PartialPaymentDialog(
     onDismiss: () -> Unit,
     onSave: (String) -> Unit
 ) {
-    var amount by remember { mutableStateOf("") }
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+    var dueAmount by remember { mutableStateOf("") }
     val remaining = (transaction.amount - transaction.partialPaidAmount).coerceAtLeast(0.0)
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Partial Payment") },
-        text = {
-            Column {
-                Text(
-                    text = "Transaction: ${transaction.name}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "Total: ${formatMoney(transaction.amount)} • Remaining: ${formatMoney(remaining)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
-                )
-                OutlinedTextField(
-                    value = amount,
-                    onValueChange = { amount = it },
-                    label = { Text("Payment Amount") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    leadingIcon = { Text("₹") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onSave(amount) },
-                enabled = amount.toDoubleOrNull()?.let { it > 0.0 && it <= remaining } == true
-            ) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
-    )
-}
-
-@Composable
-fun DueAmountDialog(
-    customer: CustomerSummary,
-    onDismiss: () -> Unit,
-    onSave: (String) -> Unit
-) {
-    var dueAmount by remember(customer.id) {
-        mutableStateOf(customer.manualPaidAmount.takeIf { it > 0.0 }?.toString().orEmpty())
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
+        containerColor = if (useDarkTheme) Color(0xFF141430) else MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
         title = {
             Text(
                 text = "Adjust Manual Paid Amount",
@@ -2033,6 +1986,7 @@ fun TransactionEditorDialog(
     ) -> Unit)? = null,
     vm: MainViewModel = viewModel()
 ) {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
     val availableKinds = remember(selectedAccountIds, transaction?.accountKind) {
         selectedAccountKinds(selectedAccountIds, transaction?.accountKind)
     }
@@ -2424,10 +2378,10 @@ fun TransactionEditorDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(24.dp))
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.62f))
+                        .background(if (useDarkTheme) Color(0xFF1A1A35) else Color(0xFFFFFFFF).copy(alpha = 0.62f))
                         .border(
                             width = 1.dp,
-                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                            color = if (useDarkTheme) Color(0xFF3A3A6A).copy(alpha = 0.5f) else Color(0xFFD0D0E8).copy(alpha = 0.5f),
                             shape = RoundedCornerShape(24.dp)
                         )
                         .padding(horizontal = 18.dp, vertical = 20.dp)
@@ -2755,6 +2709,11 @@ private fun CalculatorPad(
     onExpressionChange: (String) -> Unit,
     calculatedAmount: Double?
 ) {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+
+    val buttonBg = if (useDarkTheme) Color(0xFF2A2A50) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f)
+    val buttonBorder = if (useDarkTheme) Color(0xFF3A3A6A).copy(alpha = 0.6f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.48f)
+
     val rows = listOf(
         listOf("7", "8", "9", "/"),
         listOf("4", "5", "6", "*"),
@@ -2787,13 +2746,13 @@ private fun CalculatorPad(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(18.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
-                        contentColor = MaterialTheme.colorScheme.onSurface
-                    ),
-                    border = BorderStroke(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.48f)
-                    ),
+                            containerColor = buttonBg,
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        ),
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = buttonBorder
+                        ),
                     elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
                     contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp)
                 ) {

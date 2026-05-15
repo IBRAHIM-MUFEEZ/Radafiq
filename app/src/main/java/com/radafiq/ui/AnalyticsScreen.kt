@@ -116,7 +116,7 @@ fun AnalyticsScreen(
                 item {
                     HeroPanel(
                         title = "Total balance",
-                        amount = formatMoney(totalBalance),
+                        amountValue = totalBalance,
                         subtitle = "Used ${formatMoney(totalUsed)} minus paid ${formatMoney(totalPaid)}"
                     )
                 }
@@ -169,7 +169,7 @@ fun SummaryCard(cards: List<CardSummary>) {
             first = { itemModifier ->
                 MetricPill(
                     label = "Used",
-                    value = formatMoney(totalUsed),
+                    amountValue = totalUsed,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = itemModifier
                 )
@@ -177,7 +177,7 @@ fun SummaryCard(cards: List<CardSummary>) {
             second = { itemModifier ->
                 MetricPill(
                     label = "Paid",
-                    value = formatMoney(totalPaid),
+                    amountValue = totalPaid,
                     color = MaterialTheme.colorScheme.secondary,
                     modifier = itemModifier
                 )
@@ -188,7 +188,7 @@ fun SummaryCard(cards: List<CardSummary>) {
 
         AccentValueRow(
             label = "Balance",
-            value = formatMoney(totalBalance),
+            amountValue = totalBalance,
             color = if (totalBalance > 0.0) warningColor() else MaterialTheme.colorScheme.primary
         )
     }
@@ -256,7 +256,7 @@ private fun AccountAnalyticsCard(
                         title = card.name,
                         subtitle = card.accountKind.label,
                         metricLabel = selectedMetric.label,
-                        value = formatMoney(cardMetricValue(card, selectedMetric)),
+                        amountValue = cardMetricValue(card, selectedMetric),
                         color = cardMetricColor(card, selectedMetric)
                     )
 
@@ -329,7 +329,7 @@ private fun CustomerAnalyticsCard(
                 first = { itemModifier ->
                     MetricPill(
                         label = "Used",
-                        value = formatMoney(selectedCustomer.totalAmount),
+                        amountValue = selectedCustomer.totalAmount,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = itemModifier
                     )
@@ -337,7 +337,7 @@ private fun CustomerAnalyticsCard(
                 second = { itemModifier ->
                     MetricPill(
                         label = "Paid",
-                        value = formatMoney(selectedCustomer.creditDueAmount),
+                        amountValue = selectedCustomer.creditDueAmount,
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = itemModifier
                     )
@@ -348,7 +348,7 @@ private fun CustomerAnalyticsCard(
 
             AccentValueRow(
                 label = selectedMetric.label,
-                value = formatMoney(customerMetricValue(selectedCustomer, selectedMetric)),
+                amountValue = customerMetricValue(selectedCustomer, selectedMetric),
                 color = customerMetricColor(selectedCustomer, selectedMetric)
             )
 
@@ -367,7 +367,7 @@ private fun AnalyticsEntryCard(
     title: String,
     subtitle: String,
     metricLabel: String,
-    value: String,
+    amountValue: Double,
     color: Color
 ) {
     Column(
@@ -400,7 +400,7 @@ private fun AnalyticsEntryCard(
         Spacer(modifier = Modifier.height(12.dp))
         AccentValueRow(
             label = metricLabel,
-            value = value,
+            amountValue = amountValue,
             color = color
         )
     }

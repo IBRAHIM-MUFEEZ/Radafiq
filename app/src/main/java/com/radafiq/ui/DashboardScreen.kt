@@ -1,6 +1,14 @@
 package com.radafiq.ui
 
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -142,7 +150,25 @@ fun DashboardScreen(
                 )
             }
         ) { padding ->
-            when (currentScreen) {
+            val tabIndex = DashboardTabs.indexOfFirst { it.tab == currentScreen }
+            AnimatedContent(
+                targetState = currentScreen to tabIndex,
+                transitionSpec = {
+                    val (_, targetIdx) = targetState
+                    val (_, initialIdx) = initialState
+                    val forward = targetIdx > initialIdx
+                    (slideInHorizontally(
+                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                        initialOffsetX = { if (forward) it else -it }
+                    ) + fadeIn(tween(300))) togetherWith
+                    (slideOutHorizontally(
+                        animationSpec = tween(250, easing = FastOutSlowInEasing),
+                        targetOffsetX = { if (forward) -it else it }
+                    ) + fadeOut(tween(200)))
+                },
+                label = "dashboard_tab"
+            ) { (tab, _) ->
+            when (tab) {
                 DashboardTab.HOME -> HomeScreen(
                     vm = vm,
                     profileName = profileName,
@@ -193,6 +219,7 @@ fun DashboardScreen(
                     modifier = Modifier.padding(padding)
                 )
             }
+            } // end AnimatedContent
         }
     }
 }
@@ -202,6 +229,10 @@ private fun DashboardBottomBar(
     currentScreen: DashboardTab,
     onTabSelected: (DashboardTab) -> Unit
 ) {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+    val bgColor = if (useDarkTheme) Color(0xFF1A1A35) else MaterialTheme.colorScheme.surface.copy(alpha = 0.74f)
+    val borderColor = if (useDarkTheme) Color(0xFF3A3A6A).copy(alpha = 0.5f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -211,10 +242,10 @@ private fun DashboardBottomBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp, bottomStart = 24.dp, bottomEnd = 24.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.74f))
+                .background(bgColor)
                 .border(
                     width = 1.dp,
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                    color = borderColor,
                     shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp, bottomStart = 24.dp, bottomEnd = 24.dp)
                 )
                 .padding(horizontal = 8.dp, vertical = 10.dp),
@@ -377,7 +408,7 @@ fun HomeScreen(
         item {
             HeroPanel(
                 title = "Outstanding Balance",
-                amount = formatMoney(cardTotals.balance),
+                amountValue = cardTotals.balance,
                 subtitle = "${visibleCards.size} active account(s) currently contributing to your ledger flow."
             )
         }
@@ -387,7 +418,7 @@ fun HomeScreen(
                 first = { itemModifier ->
                     MetricPill(
                         label = "Total Used",
-                        value = formatMoney(cardTotals.used),
+                        amountValue = cardTotals.used,
                         color = warningColor(),
                         modifier = itemModifier
                     )
@@ -395,7 +426,7 @@ fun HomeScreen(
                 second = { itemModifier ->
                     MetricPill(
                         label = "Total Paid",
-                        value = formatMoney(cardTotals.paid),
+                        amountValue = cardTotals.paid,
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = itemModifier
                     )
@@ -719,8 +750,8 @@ private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOut
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Text(
-                                    text = formatMoney(currentDue),
+                                AnimatedMoney(
+                                    value = currentDue,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = warningColor(),
@@ -743,8 +774,8 @@ private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOut
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontWeight = FontWeight.Bold
                                     )
-                                    Text(
-                                        text = formatMoney(emiOutstanding),
+                                    AnimatedMoney(
+                                        value = emiOutstanding,
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary,
@@ -759,11 +790,12 @@ private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOut
 
             // Bank account: show single amount on the right
             if (!isOutgoing) {
-                Text(
-                    text = "+${formatMoney(card.payable)}",
+                AnimatedMoney(
+                    value = card.payable,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = accentColor
+                    color = accentColor,
+                    modifier = Modifier
                 )
             }
         }
@@ -822,8 +854,8 @@ private fun HomePersonCard(person: PersonSummary) {
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = formatMoney(person.totalDue),
+                AnimatedMoney(
+                    value = person.totalDue,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = if (person.totalDue > 0.0) warningColor() else personAccent
@@ -988,19 +1020,19 @@ fun EmiScheduleScreen(
                 ) {
                     MetricPill(
                         label = "Upcoming",
-                        value = formatMoney(totalUpcoming),
+                        amountValue = totalUpcoming,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f)
                     )
                     MetricPill(
                         label = "Pending",
-                        value = formatMoney(totalPending),
+                        amountValue = totalPending,
                         color = warningColor(),
                         modifier = Modifier.weight(1f)
                     )
                     MetricPill(
                         label = "Settled",
-                        value = formatMoney(totalPaid),
+                        amountValue = totalPaid,
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.weight(1f)
                     )
@@ -1095,10 +1127,11 @@ private fun EmiAmortizationCard(
                 }
                 Row(verticalAlignment = Alignment.Top) {
                     Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = formatMoney(groupTotal),
+                        AnimatedMoney(
+                            value = groupTotal,
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = "$settledCount / $totalCount done",
@@ -1143,9 +1176,9 @@ private fun EmiAmortizationCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                EmiMiniStat("Pending", formatMoney(groupPending), warningColor(), Modifier.weight(1f))
-                EmiMiniStat("Upcoming", formatMoney(groupUpcoming), MaterialTheme.colorScheme.primary, Modifier.weight(1f))
-                EmiMiniStat("Settled", formatMoney(groupPaid), MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
+                EmiMiniStat("Pending", groupPending, warningColor(), Modifier.weight(1f))
+                EmiMiniStat("Upcoming", groupUpcoming, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+                EmiMiniStat("Settled", groupPaid, MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
             }
 
             // Expand/collapse hint
@@ -1371,6 +1404,27 @@ private fun EmiMiniStat(label: String, value: String, color: Color, modifier: Mo
             color = color,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun EmiMiniStat(label: String, amountValue: Double, color: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        AnimatedMoney(
+            value = amountValue,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = color,
+            maxLines = 1
         )
         Text(
             text = label,

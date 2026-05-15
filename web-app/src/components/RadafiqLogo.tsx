@@ -5,14 +5,10 @@ interface RadafiqLogoProps {
   className?: string;
 }
 
-/**
- * Radafiq logo — shield with upward trending arrow, coin stack, and Arabic letterforms.
- * Uses the high-resolution PNG from /logo.png
- */
 export default function RadafiqLogo({ size = 48, className }: RadafiqLogoProps) {
   return (
     <img
-      src="/logo.png"
+      src="/logo-Photoroom.png"
       alt="Radafiq logo"
       width={size}
       height={size}
@@ -20,7 +16,6 @@ export default function RadafiqLogo({ size = 48, className }: RadafiqLogoProps) 
       style={{
         display: 'block',
         objectFit: 'contain',
-        borderRadius: '22%',
       }}
     />
   );

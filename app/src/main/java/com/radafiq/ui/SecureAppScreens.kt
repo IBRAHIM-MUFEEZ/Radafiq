@@ -636,11 +636,10 @@ fun AppLockScreen(
         ) {
             // Radafiq logo from assets
             coil.compose.AsyncImage(
-                model = "file:///android_asset/logo.png",
+                model = "file:///android_asset/logo-Photoroom.png",
                 contentDescription = "Radafiq Logo",
                 modifier = Modifier
-                    .size(112.dp)
-                    .clip(CircleShape),
+                    .size(112.dp),
                 contentScale = androidx.compose.ui.layout.ContentScale.Fit
             )
 

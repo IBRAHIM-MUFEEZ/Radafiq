@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import RadafiqLogo from '../components/RadafiqLogo';
+import { fadeInUp, fadeInScale } from '../utils/animations';
 
 export default function ProfileSetup() {
   const { profile, saveProfile, signInWithGoogle, signOut, user } = useApp();
+  const logoRef = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLDivElement>(null);
   const [displayName, setDisplayName] = useState(profile?.displayName ?? '');
   const [businessName, setBusinessName] = useState(profile?.businessName ?? '');
   const [email, setEmail] = useState(profile?.email ?? user?.email ?? '');
@@ -19,6 +22,11 @@ export default function ProfileSetup() {
       setEmail(profile.email);
     }
   }, [profile]);
+
+  useEffect(() => {
+    if (logoRef.current) fadeInScale(logoRef.current);
+    if (formRef.current) fadeInUp(formRef.current, 200);
+  }, []);
 
   const handleSave = async () => {
     if (!displayName.trim() || !businessName.trim()) return;
@@ -52,7 +60,7 @@ export default function ProfileSetup() {
     <div className="radafiq-bg" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
       <div style={{ width: '100%', maxWidth: 480 }}>
         {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+        <div style={{ textAlign: 'center', marginBottom: '2rem' }} ref={logoRef}>
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
             <RadafiqLogo size={88} />
           </div>
@@ -60,6 +68,7 @@ export default function ProfileSetup() {
           <p className="text-muted" style={{ marginTop: 4 }}>Customer Ledger & Finance Manager</p>
         </div>
 
+        <div ref={formRef}>
         {/* Google Sign-In */}
         {!user ? (
           <div className="flow-card" style={{ marginBottom: '1rem' }}>
@@ -155,6 +164,7 @@ export default function ProfileSetup() {
               {saving ? 'Saving...' : 'Save Profile'}
             </button>
           </div>
+        </div>
         </div>
       </div>
     </div>

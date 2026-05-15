@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import RadafiqLogo from '../components/RadafiqLogo';
 import { isPlatformAuthenticatorAvailable } from '../utils/passkey';
+import { fadeInScale, fadeInUp } from '../utils/animations';
 
 export default function AppLock() {
   const { security, verifyPasscode, resetPasscodeWithRecovery, hasPasskey, authenticateWithPasskey } = useApp();
+  const logoRef = useRef<HTMLDivElement>(null);
+  const padRef = useRef<HTMLDivElement>(null);
   const [passcode, setPasscode] = useState('');
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
@@ -14,6 +17,11 @@ export default function AppLock() {
   const [confirmNew, setConfirmNew] = useState('');
   const [passkeyAvailable, setPasskeyAvailable] = useState(false);
   const [passkeyChecking, setPasskeyChecking] = useState(false);
+
+  useEffect(() => {
+    if (logoRef.current) fadeInScale(logoRef.current);
+    if (padRef.current) fadeInUp(padRef.current, 200);
+  }, []);
 
   useEffect(() => {
     if (hasPasskey) {
@@ -210,7 +218,7 @@ export default function AppLock() {
     <div style={page}>
       <div style={card}>
 
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.25rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.25rem' }} ref={logoRef}>
           <RadafiqLogo size={80} />
         </div>
 
@@ -235,7 +243,7 @@ export default function AppLock() {
           {error && <p style={{ color: '#EF4444', fontSize: '0.875rem' }}>{error}</p>}
         </div>
 
-        <div style={{
+        <div ref={padRef} style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(3, 1fr)',
           gap: 10,

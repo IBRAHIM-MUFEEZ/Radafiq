@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import RadafiqLogo from '../components/RadafiqLogo';
+import { fadeInScale, fadeInUp } from '../utils/animations';
 
 const RECOVERY_QUESTIONS = [
   'What is your email ID?',
@@ -11,12 +12,19 @@ const RECOVERY_QUESTIONS = [
 
 export default function SecuritySetup() {
   const { setPasscode } = useApp();
+  const logoRef = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLDivElement>(null);
   const [passcode, setPasscodeVal] = useState('');
   const [confirm, setConfirm] = useState('');
   const [question, setQuestion] = useState(RECOVERY_QUESTIONS[0]);
   const [answer, setAnswer] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (logoRef.current) fadeInScale(logoRef.current);
+    if (formRef.current) fadeInUp(formRef.current, 200);
+  }, []);
 
   const passcodesMatch = passcode.length === 6 && passcode === confirm;
   // BUG-30 fix: require at least 3 characters for recovery answer
@@ -38,7 +46,7 @@ export default function SecuritySetup() {
   return (
     <div className="radafiq-bg" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
       <div style={{ width: '100%', maxWidth: 480 }}>
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+        <div style={{ textAlign: 'center', marginBottom: '2rem' }} ref={logoRef}>
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
             <RadafiqLogo size={72} />
           </div>

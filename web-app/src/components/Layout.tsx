@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Home, Users, CreditCard, Calendar, BarChart2, Settings, Sparkles, type LucideIcon,
@@ -6,6 +6,7 @@ import {
 import { useApp } from '../context/AppContext';
 import RadafiqLogo from './RadafiqLogo';
 import AnimatedAvatar from './AnimatedAvatar';
+import { navItemEntrance, fadeIn } from '../utils/animations';
 
 const NAV_ITEMS = [
   { path: '/dashboard', label: 'Home', icon: Home },
@@ -28,7 +29,7 @@ function NavIcon({ Icon, isActive }: { Icon: LucideIcon; isActive: boolean }) {
             top: -4,
             right: -6,
             color: 'var(--primary)',
-            animation: 'bounce 2s ease-in-out infinite',
+            animation: 'pulse 2s ease-in-out infinite',
             opacity: 0.7,
           }}
         />
@@ -40,15 +41,35 @@ function NavIcon({ Icon, isActive }: { Icon: LucideIcon; isActive: boolean }) {
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { profile } = useApp();
   const location = useLocation();
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
 
   const navItemsWithSparkles = useMemo(() => NAV_ITEMS, []);
 
+  useEffect(() => {
+    if (sidebarRef.current) {
+      navItemEntrance('.nav-item', 80);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mainRef.current) {
+      fadeIn(mainRef.current);
+    }
+  }, [location.pathname]);
+
   return (
     <div className="app-layout">
+      <div className="bg-orbs">
+        <div className="bg-orb" />
+        <div className="bg-orb" />
+        <div className="bg-orb" />
+      </div>
+
       {/* Sidebar */}
-      <aside className="sidebar">
+      <aside className="sidebar" ref={sidebarRef}>
         <div className="nav-logo">
-          <RadafiqLogo size={40} />
+          <RadafiqLogo size={36} />
           <div>
             <div className="nav-logo-text">Radafiq</div>
             <div className="nav-logo-sub">Finance Manager</div>
@@ -72,7 +93,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </nav>
 
         {profile && (
-          <div style={{ padding: '1rem 1.25rem', borderTop: '1px solid var(--outline)' }}>
+          <div className="nav-footer">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <AnimatedAvatar
                 name={profile.displayName}
@@ -93,11 +114,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main content */}
-      <main className="main-content">
+      <main className="main-content" ref={mainRef}>
         <div className="radafiq-bg">
-          <div className="bg-orb" />
-          <div className="bg-orb" />
-          <div key={location.pathname} className="fade-in">
+          <div key={location.pathname}>
             {children}
           </div>
         </div>

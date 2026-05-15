@@ -1,10 +1,13 @@
-import React, { useState, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Search, Plus, RefreshCw, Trash2, RotateCcw, Settings, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatMoney } from '../utils/format';
 import { CustomerSummary } from '../types/models';
 import AnimatedAvatar from '../components/AnimatedAvatar';
+import AnimatedMoney from '../components/AnimatedMoney';
+import { fadeInUp, staggerFadeInUp } from '../utils/animations';
 
 function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; onClick: () => void; index: number }) {
   const txnCount = customer.transactions.length;
@@ -37,7 +40,7 @@ function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; 
   return (
     <div
       ref={cardRef}
-      className={`flow-card tilt-card stagger-${Math.min(index + 1, 10)}`}
+      className={`flow-card tilt-card customer-card`}
       style={{
         cursor: 'pointer',
         marginBottom: '0.75rem',
@@ -73,7 +76,7 @@ function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; 
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div style={{ fontWeight: 700, fontSize: '1.05rem', color: customer.balance > 0 ? 'var(--warning)' : 'var(--primary)' }}>
-            {formatMoney(customer.balance)}
+            <AnimatedMoney value={customer.balance} />
           </div>
           <div className="text-muted text-xs">Balance</div>
         </div>
@@ -89,7 +92,7 @@ function DeletedCustomerRow({ customer, onRestore, onDelete, index }: {
   index: number;
 }) {
   return (
-    <div className={`flow-card hover-lift stagger-${Math.min(index + 1, 10)}`} style={{ '--card-accent': 'var(--red)', marginBottom: '0.75rem' } as React.CSSProperties}>
+    <div className={`flow-card hover-lift customer-card`} style={{ '--card-accent': 'var(--red)', marginBottom: '0.75rem' } as React.CSSProperties}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div className="avatar" style={{ background: 'color-mix(in srgb, var(--red) 15%, transparent)', color: 'var(--red)', transition: 'all 0.3s ease' }}>
           {customer.name.slice(0, 2).toUpperCase()}
@@ -114,6 +117,8 @@ function DeletedCustomerRow({ customer, onRestore, onDelete, index }: {
 export default function CustomersPage() {
   const { customers, deletedCustomers, addCustomer, restoreCustomer, permanentlyDeleteCustomer, syncStatus, triggerSync } = useApp();
   const navigate = useNavigate();
+  const pageRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
   const [showRecycleBin, setShowRecycleBin] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -133,6 +138,11 @@ export default function CustomersPage() {
     search ? sorted.filter(c => c.name.toLowerCase().includes(search.toLowerCase())) : sorted,
     [sorted, search]
   );
+
+  useEffect(() => {
+    if (pageRef.current) fadeInUp(pageRef.current, 0, 400);
+    if (listRef.current) staggerFadeInUp('.customer-card', 50, 'first', 400);
+  }, [customers, deletedCustomers, showRecycleBin]);
 
   const letters = useMemo(() => {
     if (search) return [];
@@ -176,7 +186,7 @@ export default function CustomersPage() {
   }, [filtered, search]);
 
   return (
-    <div className="page-content" style={{ position: 'relative' }}>
+    <div className="page-content" style={{ position: 'relative' }} ref={pageRef}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1rem' }}>
         <div>
@@ -234,7 +244,9 @@ export default function CustomersPage() {
           <p>{showRecycleBin ? 'Deleted customers will appear here.' : 'Tap + to add your first customer ledger.'}</p>
         </div>
       ) : (
-        grouped.map(({ letter, items }) => (
+        // paddingRight no longer needed — alphabet index is portal-rendered outside scroll container
+        <div ref={listRef}>
+        {grouped.map(({ letter, items }) => (
           <div key={letter || 'all'}>
             {letter && (
               <div
@@ -263,33 +275,92 @@ export default function CustomersPage() {
               )
             ))}
           </div>
-        ))
-      )}
-
-      {/* Alphabet index */}
-      {!showRecycleBin && !search && letters.length > 0 && (
-        <div className="alpha-index">
-          {letters.map(l => (
-            <div key={l} className="alpha-index-letter" onClick={() => scrollToLetter(l)}>{l}</div>
-          ))}
+        ))}
         </div>
       )}
 
-      {/* FAB */}
-      {!showRecycleBin && (
+      {/* Alphabet index — rendered into document.body via portal so it is truly
+          fixed to the viewport and unaffected by the overflow-y:auto scroll
+          container in main-content */}
+      {!showRecycleBin && !search && letters.length > 0 && ReactDOM.createPortal(
+        <div style={{
+          position: 'fixed',
+          right: 6,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          zIndex: 200,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1,
+          pointerEvents: 'auto',
+        }}>
+          {letters.map(l => (
+            <div
+              key={l}
+              onClick={() => scrollToLetter(l)}
+              style={{
+                fontSize: '0.625rem',
+                fontWeight: 700,
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: '1px 4px',
+                borderRadius: 4,
+                lineHeight: 1.4,
+                userSelect: 'none',
+              }}
+              onMouseEnter={e => {
+                (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-soft)';
+                (e.currentTarget as HTMLDivElement).style.color = 'var(--text)';
+              }}
+              onMouseLeave={e => {
+                (e.currentTarget as HTMLDivElement).style.background = 'transparent';
+                (e.currentTarget as HTMLDivElement).style.color = 'var(--text-muted)';
+              }}
+            >
+              {l}
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
+
+      {/* FAB — also rendered into document.body via portal so it is truly fixed
+          to the viewport and never overlaps the customer list */}
+      {!showRecycleBin && ReactDOM.createPortal(
         <button
-          className="btn btn-primary glow-pulse"
-          style={{
-            position: 'fixed', bottom: 80, right: 24,
-            borderRadius: 20, padding: '0.875rem 1.25rem',
-            boxShadow: '0 4px 20px color-mix(in srgb, var(--primary) 40%, transparent)',
-            zIndex: 50,
-            '--glow-color': 'var(--primary)',
-          } as React.CSSProperties}
           onClick={() => setShowAddModal(true)}
+          style={{
+            position: 'fixed',
+            bottom: 96,
+            right: 24,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '0.875rem 1.25rem',
+            borderRadius: 20,
+            background: 'var(--gradient-primary)',
+            color: '#FFFFFF',
+            border: 'none',
+            fontFamily: 'var(--font)',
+            fontSize: '0.9375rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            boxShadow: '0 4px 20px rgba(99, 102, 241, 0.35)',
+            transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+            zIndex: 50,
+          }}
+          onMouseEnter={e => {
+            (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-2px)';
+            (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 6px 24px rgba(99, 102, 241, 0.45)';
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(0)';
+            (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 4px 20px rgba(99, 102, 241, 0.35)';
+          }}
         >
           <Plus size={18} /> Add Customer
-        </button>
+        </button>,
+        document.body
       )}
 
       {/* Add modal */}

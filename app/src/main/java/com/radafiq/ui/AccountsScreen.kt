@@ -194,8 +194,8 @@ fun AccountListRow(
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = formatMoney(card.bill),
+                AnimatedMoney(
+                    value = card.bill,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = accountAccent(card.accountKind)
@@ -250,8 +250,8 @@ private fun PersonAccountRow(
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = formatMoney(dueAmount),
+                AnimatedMoney(
+                    value = dueAmount,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = if (dueAmount > 0.0) warningColor() else accent
@@ -301,8 +301,8 @@ fun AccountCard(
                     Column(
                         horizontalAlignment = androidx.compose.ui.Alignment.End
                     ) {
-                        Text(
-                            text = formatMoney(card.payable),
+                        AnimatedMoney(
+                            value = card.payable,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -320,8 +320,8 @@ fun AccountCard(
                         }
                     }
                 } else {
-                    Text(
-                        text = formatMoney(card.payable),
+                    AnimatedMoney(
+                        value = card.payable,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
@@ -336,7 +336,7 @@ fun AccountCard(
             first = { itemModifier ->
                 MetricPill(
                     label = "Used",
-                    value = formatMoney(card.bill),
+                    amountValue = card.bill,
                     color = accountAccent(card.accountKind),
                     modifier = itemModifier
                 )
@@ -344,7 +344,7 @@ fun AccountCard(
             second = { itemModifier ->
                 MetricPill(
                     label = "Personal Paid",
-                    value = formatMoney(card.pending),
+                    amountValue = card.pending,
                     color = MaterialTheme.colorScheme.secondary,
                     modifier = itemModifier
                 )
@@ -355,7 +355,7 @@ fun AccountCard(
 
         AccentValueRow(
             label = "Balance",
-            value = formatMoney(card.payable),
+            amountValue = card.payable,
             color = accountAccent(card.accountKind)
         )
 
@@ -459,10 +459,10 @@ fun CreditCardDueStatus(card: CardSummary) {
         remainingDue < 0.0 -> "Overpaid"
         else -> "Remaining due"
     }
-    val balanceValue = when {
-        card.dueAmount <= 0.0 -> formatMoney(0.0)
-        remainingDue < 0.0 -> formatMoney(abs(remainingDue))
-        else -> formatMoney(remainingDue)
+    val balanceAmountValue = when {
+        card.dueAmount <= 0.0 -> 0.0
+        remainingDue < 0.0 -> abs(remainingDue)
+        else -> remainingDue
     }
     val progress = when {
         card.dueAmount <= 0.0 -> 0f
@@ -509,7 +509,7 @@ fun CreditCardDueStatus(card: CardSummary) {
             first = { itemModifier ->
                 MetricPill(
                     label = "Due",
-                    value = formatMoney(card.dueAmount),
+                    amountValue = card.dueAmount,
                     color = statusColor,
                     modifier = itemModifier
                 )
@@ -517,7 +517,7 @@ fun CreditCardDueStatus(card: CardSummary) {
             second = { itemModifier ->
                 MetricPill(
                     label = "Personal Paid",
-                    value = formatMoney(card.pending),
+                    amountValue = card.pending,
                     color = MaterialTheme.colorScheme.secondary,
                     modifier = itemModifier
                 )
@@ -540,7 +540,7 @@ fun CreditCardDueStatus(card: CardSummary) {
 
         AccentValueRow(
             label = balanceLabel,
-            value = balanceValue,
+            amountValue = balanceAmountValue,
             color = statusColor
         )
 
@@ -799,19 +799,19 @@ fun AccountDetailScreen(
                     ) {
                         MetricPill(
                             label = "Total Used",
-                            value = formatMoney(card.bill),
+                            amountValue = card.bill,
                             color = accentColor,
                             modifier = Modifier.weight(1f)
                         )
                         MetricPill(
                             label = "Personal Paid",
-                            value = formatMoney(card.pending),
+                            amountValue = card.pending,
                             color = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.weight(1f)
                         )
                         MetricPill(
                             label = "Balance",
-                            value = formatMoney(card.payable),
+                            amountValue = card.payable,
                             color = if (card.payable > 0.0) warningColor() else MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.weight(1f)
                         )
@@ -958,8 +958,8 @@ private fun AccountCustomerRow(
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = formatMoney(dueAmount),
+                AnimatedMoney(
+                    value = dueAmount,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = if (dueAmount > 0.0) warningColor() else MaterialTheme.colorScheme.primary

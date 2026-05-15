@@ -260,8 +260,8 @@ private fun SavingsBalanceCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = formatMoney(customer.savingsBalance),
+            AnimatedMoney(
+                value = customer.savingsBalance,
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
@@ -287,13 +287,13 @@ private fun SavingsBalanceCard(
             ) {
                 MetricPill(
                     label = "Total Deposited",
-                    value = formatMoney(totalDeposited),
+                    amountValue = totalDeposited,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f)
                 )
                 MetricPill(
                     label = "Total Withdrawn",
-                    value = formatMoney(totalWithdrawn),
+                    amountValue = totalWithdrawn,
                     color = warningColor(),
                     modifier = Modifier.weight(1f)
                 )
@@ -335,8 +335,8 @@ private fun SavingsBalanceCard(
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text(
-                                text = formatMoney(b.balance),
+                            AnimatedMoney(
+                                value = b.balance,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.secondary

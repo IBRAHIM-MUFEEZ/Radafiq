@@ -1,14 +1,18 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Minus, Trash2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatMoney, formatDate } from '../utils/format';
 import { SavingsEntry, BANK_ACCOUNTS } from '../types/models';
+import AnimatedMoney from '../components/AnimatedMoney';
+import { fadeInUp, staggerFadeInUp } from '../utils/animations';
 
 export default function SavingsPage() {
   const { customerId } = useParams<{ customerId: string }>();
   const navigate = useNavigate();
   const { customers, settings, addSavingsDeposit, addSavingsWithdrawal, deleteSavingsEntry } = useApp();
+  const pageRef = useRef<HTMLDivElement>(null);
+  const balanceRef = useRef<HTMLDivElement>(null);
 
   const customer = customers.find(c => c.id === customerId);
   const [showDeposit, setShowDeposit] = useState(false);
@@ -34,6 +38,12 @@ export default function SavingsPage() {
       </div>
     );
   }
+
+  useEffect(() => {
+    if (pageRef.current) fadeInUp(pageRef.current, 0, 400);
+    if (balanceRef.current) fadeInUp(balanceRef.current, 100, 500);
+    staggerFadeInUp('.savings-card', 60, 'first', 400);
+  }, [customer.id]);
 
   const totalDeposited = customer.savingsEntries.filter(e => e.type === 'deposit').reduce((s, e) => s + e.amount, 0);
   const totalWithdrawn = customer.savingsEntries.filter(e => e.type === 'withdrawal').reduce((s, e) => s + e.amount, 0);
@@ -100,18 +110,18 @@ export default function SavingsPage() {
   };
 
   return (
-    <div className="page-content">
+    <div className="page-content" ref={pageRef}>
       <button className="btn btn-ghost" style={{ marginBottom: '1rem' }} onClick={() => navigate(`/customers/${customer.id}`)}>
         <ArrowLeft size={18} /> {customer.name}
       </button>
 
       {/* Balance card */}
-      <div className="flow-card" style={{ marginBottom: '1rem' }}>
+      <div className="flow-card" style={{ marginBottom: '1rem' }} ref={balanceRef}>
         <p className="text-muted text-xs" style={{ textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
           Available Balance
         </p>
         <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--primary)', marginBottom: 4 }}>
-          {formatMoney(customer.savingsBalance)}
+          <AnimatedMoney value={customer.savingsBalance} duration={800} />
         </h1>
         <p className="text-muted text-sm" style={{ marginBottom: '1.25rem' }}>
           Bank account savings — not a loan
@@ -120,11 +130,11 @@ export default function SavingsPage() {
         <div className="two-col" style={{ marginBottom: '1rem' }}>
           <div className="metric-pill">
             <span className="label">Total Deposited</span>
-            <span className="value text-primary">{formatMoney(totalDeposited)}</span>
+            <span className="value text-primary"><AnimatedMoney value={totalDeposited} /></span>
           </div>
           <div className="metric-pill">
             <span className="label">Total Withdrawn</span>
-            <span className="value" style={{ color: 'var(--warning)' }}>{formatMoney(totalWithdrawn)}</span>
+            <span className="value" style={{ color: 'var(--warning)' }}><AnimatedMoney value={totalWithdrawn} /></span>
           </div>
         </div>
 
@@ -154,10 +164,10 @@ export default function SavingsPage() {
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--secondary)' }}>
-                      {formatMoney(b.balance)}
+                      <AnimatedMoney value={b.balance} />
                     </div>
                     <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
-                      Dep. {formatMoney(b.deposited)}
+                      Dep. <AnimatedMoney value={b.deposited} />
                     </div>
                   </div>
                 </div>
@@ -197,7 +207,7 @@ export default function SavingsPage() {
           const isDeposit = entry.type === 'deposit';
           const accentColor = isDeposit ? 'var(--primary)' : 'var(--warning)';
           return (
-            <div key={entry.id} className="flow-card" style={{ '--card-accent': accentColor, marginBottom: '0.75rem' } as React.CSSProperties}>
+            <div key={entry.id} className="flow-card savings-card" style={{ '--card-accent': accentColor, marginBottom: '0.75rem' } as React.CSSProperties}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{
                   width: 36, height: 36, borderRadius: '50%',

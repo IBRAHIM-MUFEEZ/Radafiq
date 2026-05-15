@@ -1,7 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { formatMoney, formatDate } from '../utils/format';
 import { CustomerTransaction } from '../types/models';
+import AnimatedMoney from '../components/AnimatedMoney';
+import { fadeInUp, staggerFadeInUp } from '../utils/animations';
 
 interface EmiRow {
   groupId: string;
@@ -25,6 +27,12 @@ interface EmiRow {
 
 export default function EmiSchedulePage() {
   const { customers, toggleTransactionSettled } = useApp();
+  const pageRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (pageRef.current) fadeInUp(pageRef.current, 0, 400);
+    staggerFadeInUp('.emi-card', 80, 'first', 400);
+  }, []);
 
   const today = useMemo(() => new Date(), []);
 
@@ -128,7 +136,7 @@ export default function EmiSchedulePage() {
   }, [allRows]);
 
   return (
-    <div className="page-content">
+    <div className="page-content" ref={pageRef}>
       <div style={{ marginBottom: '1.5rem' }}>
         <h2>EMI Schedule</h2>
         <p className="text-muted text-sm" style={{ marginTop: 4 }}>
@@ -151,7 +159,7 @@ export default function EmiSchedulePage() {
           const dueSoonCount = rows.filter(r => r.isDueSoon).length;
 
           return (
-            <div key={key} className="flow-card" style={{ marginBottom: '1rem' }}>
+            <div key={key} className="flow-card emi-card" style={{ marginBottom: '1rem' }}>
               {/* Plan header */}
               <div style={{ marginBottom: '0.75rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -179,7 +187,7 @@ export default function EmiSchedulePage() {
                   {first.customerName} • {first.accountName} • {settledCount}/{rows.length} settled
                 </div>
                 <div className="text-muted text-xs" style={{ marginTop: 2 }}>
-                  Total: {formatMoney(totalAmount)}
+                  Total: <AnimatedMoney value={totalAmount} />
                 </div>
               </div>
 
@@ -275,7 +283,7 @@ export default function EmiSchedulePage() {
 
                     {/* Amount + status */}
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div style={{ fontWeight: 700, color: statusColor }}>{formatMoney(row.amount)}</div>
+                      <div style={{ fontWeight: 700, color: statusColor }}><AnimatedMoney value={row.amount} /></div>
                       <div className="text-xs" style={{ color: statusColor }}>{statusLabel}</div>
                     </div>
 

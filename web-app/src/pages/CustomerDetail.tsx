@@ -5,6 +5,7 @@ import { useApp } from '../context/AppContext';
 import { formatMoney, formatDate, todayString, evaluateExpression } from '../utils/format';
 import { CustomerTransaction, isVisibleInTransactions, isEmi, isSplit, isEmiOverdue, daysUntilDue, AccountKind, AccountOption, SplitEntry, ACCOUNT_KIND_LABELS, getAccountOptions, ALL_ACCOUNTS } from '../types/models';
 import { generateAndDownloadStatement } from '../utils/statementGenerator';
+import AnimatedMoney from '../components/AnimatedMoney';
 
 type TxnFilter = 'ALL' | 'bank_account' | 'credit_card' | 'person';
 
@@ -756,18 +757,18 @@ export default function CustomerDetail() {
         <div className="two-col" style={{ marginBottom: '0.75rem' }}>
           <div className="metric-pill">
             <span className="label">Total Used</span>
-            <span className="value text-primary">{formatMoney(customer.totalAmount)}</span>
+            <span className="value text-primary"><AnimatedMoney value={customer.totalAmount} /></span>
           </div>
           <div className="metric-pill">
             <span className="label">Customer Paid</span>
-            <span className="value" style={{ color: 'var(--secondary)' }}>{formatMoney(customer.creditDueAmount)}</span>
+            <span className="value" style={{ color: 'var(--secondary)' }}><AnimatedMoney value={customer.creditDueAmount} /></span>
           </div>
         </div>
 
         <div className="accent-row">
           <span className="accent-label">Balance Remaining</span>
           <span className="accent-value" style={{ color: customer.balance > 0 ? 'var(--warning)' : 'var(--primary)' }}>
-            {formatMoney(customer.balance)}
+            <AnimatedMoney value={customer.balance} />
           </span>
         </div>
 
@@ -819,10 +820,10 @@ export default function CustomerDetail() {
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
                       <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: accent }}>
-                        {formatMoney(b.totalUsed)}
+                        <AnimatedMoney value={b.totalUsed} />
                       </div>
                       <div style={{ fontSize: '0.6875rem', color: b.totalDue > 0 ? 'var(--warning)' : 'var(--primary)' }}>
-                        {b.totalDue > 0 ? `Due ${formatMoney(b.totalDue)}` : '✓ Settled'}
+                        {b.totalDue > 0 ? <>Due <AnimatedMoney value={b.totalDue} /></> : '✓ Settled'}
                       </div>
                     </div>
                   </div>

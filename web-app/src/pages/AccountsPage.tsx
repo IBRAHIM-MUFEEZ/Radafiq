@@ -1,15 +1,17 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Settings } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatMoney } from '../utils/format';
 import { CardSummary, isVisibleInTransactions } from '../types/models';
+import AnimatedMoney from '../components/AnimatedMoney';
+import { fadeInUp, staggerFadeInUp } from '../utils/animations';
 
 function AccountRow({ card, onClick }: { card: CardSummary; onClick: () => void }) {
   const accentColor = card.accountKind === 'credit_card' ? 'var(--warning)' : 'var(--secondary)';
   return (
     <div
-      className="flow-card"
+      className="flow-card account-card"
       style={{ '--card-accent': accentColor, cursor: 'pointer', marginBottom: '0.75rem' } as React.CSSProperties}
       onClick={onClick}
     >
@@ -19,7 +21,7 @@ function AccountRow({ card, onClick }: { card: CardSummary; onClick: () => void 
           <div className="text-muted text-sm">{card.accountKind === 'credit_card' ? 'Credit Card' : 'Bank Account'}</div>
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontWeight: 700, color: accentColor }}>{formatMoney(card.bill)}</div>
+          <div style={{ fontWeight: 700, color: accentColor }}><AnimatedMoney value={card.bill} /></div>
           <div className="text-muted text-xs">Total used</div>
         </div>
       </div>
@@ -30,6 +32,8 @@ function AccountRow({ card, onClick }: { card: CardSummary; onClick: () => void 
 export default function AccountsPage() {
   const { cards, customers } = useApp();
   const navigate = useNavigate();
+  const pageRef = useRef<HTMLDivElement>(null);
+  const cardListRef = useRef<HTMLDivElement>(null);
 
   const usedAccountIds = useMemo(() =>
     new Set(customers.flatMap(c => c.transactions.map(t => t.accountId))),
@@ -43,6 +47,11 @@ export default function AccountsPage() {
 
   const creditCards = visibleCards.filter(c => c.accountKind === 'credit_card');
   const bankAccounts = visibleCards.filter(c => c.accountKind === 'bank_account');
+
+  useEffect(() => {
+    if (pageRef.current) fadeInUp(pageRef.current, 0, 400);
+    if (cardListRef.current) staggerFadeInUp('.account-card', 60, 'first', 400);
+  }, []);
 
   const personCards = useMemo(() => {
     const map = new Map<string, { accountId: string; name: string; used: number; due: number }>();
@@ -65,7 +74,7 @@ export default function AccountsPage() {
   }, [customers]);
 
   return (
-    <div className="page-content">
+    <div className="page-content" ref={pageRef}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
           <h2>Accounts</h2>
@@ -112,14 +121,14 @@ export default function AccountsPage() {
                 Persons
               </div>
               {personCards.map(p => (
-                <div key={p.accountId} className="flow-card" style={{ '--card-accent': 'var(--primary)', marginBottom: '0.75rem' } as React.CSSProperties}>
+                <div key={p.accountId} className="flow-card account-card" style={{ '--card-accent': 'var(--primary)', marginBottom: '0.75rem' } as React.CSSProperties}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ minWidth: 0 }}>
                       <div className="truncate font-semibold">{p.name}</div>
-                      <div className="text-muted text-sm">Person • Used {formatMoney(p.used)}</div>
+                      <div className="text-muted text-sm">Person • Used <AnimatedMoney value={p.used} /></div>
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div style={{ fontWeight: 700, color: p.due > 0 ? 'var(--warning)' : 'var(--primary)' }}>{formatMoney(p.due)}</div>
+                      <div style={{ fontWeight: 700, color: p.due > 0 ? 'var(--warning)' : 'var(--primary)' }}><AnimatedMoney value={p.due} /></div>
                       <div className="text-muted text-xs">{p.due > 0 ? 'Due' : 'Settled'}</div>
                     </div>
                   </div>

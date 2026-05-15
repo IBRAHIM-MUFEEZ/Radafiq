@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { ALL_ACCOUNTS, BANK_ACCOUNTS, CREDIT_CARDS } from '../types/models';
 import { currentTimestampLabel } from '../utils/format';
 import { isPlatformAuthenticatorAvailable } from '../utils/passkey';
+import { fadeInUp, staggerFadeInUp } from '../utils/animations';
 
 const RECOVERY_QUESTIONS = [
   'What is your email ID?',
@@ -19,6 +20,7 @@ export default function SettingsPage() {
     hasPasskey, registerPasskey, removePasskey,
     exportBackupToFile, importBackupFromFile, backupStatusMessage, backupInProgress,
   } = useApp();
+  const pageRef = useRef<HTMLDivElement>(null);
 
   const [editProfile, setEditProfile] = useState(false);
   const [displayName, setDisplayName] = useState(profile?.displayName ?? '');
@@ -97,6 +99,11 @@ export default function SettingsPage() {
     }
   };
 
+  useEffect(() => {
+    if (pageRef.current) fadeInUp(pageRef.current, 0, 400);
+    staggerFadeInUp('.settings-card', 80, 'first', 400);
+  }, []);
+
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) importBackupFromFile(file);
@@ -120,14 +127,14 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="page-content">
+    <div className="page-content" ref={pageRef}>
       <h2 style={{ marginBottom: '0.5rem' }}>Settings</h2>
       <p className="text-muted text-sm" style={{ marginBottom: '1.5rem' }}>
         Manage profile, security, backups, and account configuration.
       </p>
 
       {/* Profile */}
-      <div className="flow-card" style={{ marginBottom: '1rem' }}>
+      <div className="flow-card settings-card" style={{ marginBottom: '1rem' }}>
         <h3 style={{ marginBottom: '0.75rem' }}>Profile</h3>
         {editProfile ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
@@ -167,7 +174,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Security */}
-      <div className="flow-card" style={{ '--card-accent': 'var(--secondary)', marginBottom: '1rem' } as React.CSSProperties}>
+      <div className="flow-card settings-card" style={{ '--card-accent': 'var(--secondary)', marginBottom: '1rem' } as React.CSSProperties}>
         <h3 style={{ marginBottom: '0.875rem' }}>Security</h3>
 
         <div className="toggle-row" style={{ marginBottom: 8 }}>
@@ -294,7 +301,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Backup & Restore */}
-      <div className="flow-card" style={{ marginBottom: '1rem' }}>
+      <div className="flow-card settings-card" style={{ marginBottom: '1rem' }}>
         <h3 style={{ marginBottom: '0.5rem' }}>Backup & Restore</h3>
         <p className="text-muted text-sm" style={{ marginBottom: '0.875rem' }}>
           Export your profile, settings, and ledger data to a JSON file, then import it anytime.
@@ -318,7 +325,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Appearance */}
-      <div className="flow-card hover-lift" style={{ '--card-accent': 'var(--secondary)', marginBottom: '1rem' } as React.CSSProperties}>
+      <div className="flow-card hover-lift settings-card" style={{ '--card-accent': 'var(--secondary)', marginBottom: '1rem' } as React.CSSProperties}>
         <h3 style={{ marginBottom: '0.875rem' }}>Appearance</h3>
         <div className="two-col">
           <button
@@ -345,7 +352,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Account Selection */}
-      <div className="flow-card" style={{ marginBottom: '1rem' }}>
+      <div className="flow-card settings-card" style={{ marginBottom: '1rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
           <h3>Account Selection</h3>
           <button className="btn btn-ghost btn-sm" onClick={() => setShowAccountsConfig(v => !v)}>
@@ -398,7 +405,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Account / Sign Out */}
-      <div className="flow-card" style={{ '--card-accent': 'var(--red)' } as React.CSSProperties}>
+      <div className="flow-card settings-card" style={{ '--card-accent': 'var(--red)' } as React.CSSProperties}>
         <h3 style={{ marginBottom: '0.5rem' }}>Account</h3>
         <p className="text-muted text-sm" style={{ marginBottom: '0.875rem' }}>
           Sign out and return to the profile setup screen.
