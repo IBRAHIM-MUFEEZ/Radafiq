@@ -56,6 +56,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -94,9 +95,11 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.radafiq.data.models.AccountKind
 import com.radafiq.data.models.AccountOption
+import com.radafiq.data.models.CustomerSettlementEntry
 import com.radafiq.data.models.CustomerSummary
 import com.radafiq.data.models.CustomerTransaction
 import com.radafiq.data.models.IndianAccountCatalog
+import com.radafiq.data.models.SettlementHistoryEntry
 import com.radafiq.data.models.SplitEntry
 import com.radafiq.viewmodel.DraftTransactionState
 import com.radafiq.viewmodel.MainViewModel
@@ -153,12 +156,13 @@ fun CustomersScreen(
     var searchQuery by remember { mutableStateOf("") }
 
     val allVisibleCustomers = if (viewMode == CustomerViewMode.ACTIVE) customers else deletedCustomers
+    val allVisibleKey = allVisibleCustomers.sumOf { it.snapshotVersion }
 
     // Sort alphabetically, then filter by search
-    val sortedCustomers = remember(allVisibleCustomers) {
+    val sortedCustomers = remember(allVisibleKey) {
         allVisibleCustomers.sortedBy { it.name.uppercase() }
     }
-    val visibleCustomers = remember(sortedCustomers, searchQuery) {
+    val visibleCustomers = remember(allVisibleKey, searchQuery) {
         if (searchQuery.isBlank()) sortedCustomers
         else sortedCustomers.filter { it.name.contains(searchQuery, ignoreCase = true) }
     }
@@ -168,7 +172,7 @@ fun CustomersScreen(
     // When a letter header is inserted, it occupies an item too.
     // We build a flat ordered list of items: LetterHeader | CustomerItem
 
-    val listItems = remember(visibleCustomers, searchQuery) {
+    val listItems = remember(allVisibleKey, searchQuery) {
         if (visibleCustomers.isEmpty() || searchQuery.isNotBlank()) {
             // No letter headers when searching
             visibleCustomers.map { CustomerListItem.Customer(it) }
@@ -223,6 +227,7 @@ fun CustomersScreen(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .radafiqScrollBackground()
                 .padding(start = 16.dp, end = 36.dp), // right padding leaves room for index strip
             contentPadding = PaddingValues(top = 16.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -431,9 +436,12 @@ fun CustomerCard(
 ) {
     var showAddTransaction by remember { mutableStateOf(false) }
     var transactionToEdit by remember { mutableStateOf<CustomerTransaction?>(null) }
+    var transactionToDelete by remember { mutableStateOf<CustomerTransaction?>(null) }
     var transactionFilter by remember(customer.id) { mutableStateOf(TransactionTypeFilter.ALL) }
     // FIX-17: Confirmation dialog state before deleting a customer
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    // Settled transactions are hidden by default; toggle below reveals them
+    var showSettled by remember { mutableStateOf(false) }
 
     // Auto-reopen dialog if a draft exists for this customer (e.g. after biometric lock)
     val draft by vm.draftTransaction.collectAsState()
@@ -443,7 +451,7 @@ fun CustomerCard(
         }
     }
 
-    val filteredTransactions = remember(customer.transactions, transactionFilter) {
+    val filteredTransactions = remember(customer.snapshotVersion, transactionFilter, showSettled) {
         val predicate: ((CustomerTransaction) -> Boolean)? = when (transactionFilter) {
             TransactionTypeFilter.ALL -> null
             TransactionTypeFilter.BANK_ACCOUNT -> { t -> t.accountKind == AccountKind.BANK_ACCOUNT }
@@ -455,7 +463,26 @@ fun CustomerCard(
         // Pre-sorting by individual amount before grouping produces incorrect group order for splits.
         customer.transactions
             .filter { t -> t.isVisibleInTransactions(today) }
+            .filter { t -> showSettled || !t.isSettled }
             .let { if (predicate == null) it else it.filter(predicate) }
+    }
+
+    // Count settled transactions currently hidden (for the toggle chip)
+    val settledHiddenCount = remember(customer.snapshotVersion, transactionFilter, showSettled) {
+        if (showSettled) 0
+        else {
+            val predicate: ((CustomerTransaction) -> Boolean)? = when (transactionFilter) {
+                TransactionTypeFilter.ALL -> null
+                TransactionTypeFilter.BANK_ACCOUNT -> { t -> t.accountKind == AccountKind.BANK_ACCOUNT }
+                TransactionTypeFilter.CREDIT_CARD -> { t -> t.accountKind == AccountKind.CREDIT_CARD }
+                TransactionTypeFilter.PERSON -> { t -> t.accountKind == AccountKind.PERSON }
+            }
+            val today = java.time.LocalDate.now()
+            customer.transactions
+                .filter { t -> t.isVisibleInTransactions(today) && t.isSettled }
+                .let { if (predicate == null) it else it.filter(predicate) }
+                .size
+        }
     }
     FlowCard(
         accentColor = MaterialTheme.colorScheme.primary,
@@ -615,11 +642,41 @@ fun CustomerCard(
                         .padding(top = 10.dp, bottom = 8.dp)
                 )
 
+                // Settled toggle chip — shown when there are hidden settled transactions
+                if (settledHiddenCount > 0 || showSettled) {
+                    Row(
+                        modifier = Modifier
+                            .padding(bottom = 8.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(
+                                if (showSettled) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                            )
+                            .border(
+                                1.dp,
+                                if (showSettled) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                RoundedCornerShape(999.dp)
+                            )
+                            .clickable { showSettled = !showSettled }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = if (showSettled) "Hide Settled" else "${settledHiddenCount} Settled",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (showSettled) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
                 val today = java.time.LocalDate.now()
 
                 // BUG-09: Use remember to avoid recomputing grouped transactions on every recomposition
-                // filteredTransactions is already visibility-filtered and type-filtered
-                val grouped = remember(filteredTransactions) {
+                // filteredTransactions is already visibility-filtered, type-filtered, and settled-filtered
+                val grouped = remember(customer.snapshotVersion, transactionFilter, showSettled) {
                     buildGroupedTransactions(filteredTransactions)
                 }
 
@@ -669,7 +726,7 @@ fun CustomerCard(
                                     transaction = transaction,
                                     runningBalance = bal,
                                     onEdit = { transactionToEdit = transaction },
-                                    onDelete = { vm.deleteTransaction(transaction.id) },
+                                    onDelete = { transactionToDelete = transaction },
                                     onSettledChange = { vm.toggleTransactionSettled(transaction.id, it) },
                                     onPartialPayment = { amount -> vm.addPartialPayment(transaction.id, amount) }
                                 )
@@ -728,7 +785,7 @@ fun CustomerCard(
             selectedAccountIds = selectedAccountIds,
             transaction = null,
             onDismiss = { showAddTransaction = false },
-            onSave = { transactionName, accountId, accountName, accountKind, amount, transactionDate, personName ->
+            onSave = { transactionName, accountId, accountName, accountKind, amount, transactionDate, personName, _ ->
                 vm.addTransaction(
                     customerId = customer.id,
                     transactionName = transactionName,
@@ -776,7 +833,7 @@ fun CustomerCard(
             selectedAccountIds = selectedAccountIds,
             transaction = transaction,
             onDismiss = { transactionToEdit = null },
-            onSave = { transactionName, accountId, accountName, accountKind, amount, transactionDate, personName ->
+            onSave = { transactionName, accountId, accountName, accountKind, amount, transactionDate, personName, dueDate ->
                 vm.updateTransaction(
                     transactionId = transaction.id,
                     transactionName = transactionName,
@@ -785,7 +842,8 @@ fun CustomerCard(
                     accountKind = accountKind,
                     amount = amount,
                     transactionDate = transactionDate,
-                    personName = personName
+                    personName = personName,
+                    dueDate = if (transaction.isEmi) dueDate else ""
                 )
                 transactionToEdit = null
             },
@@ -834,6 +892,36 @@ fun CustomerCard(
         )
     }
 
+    // Transaction delete confirmation — at card level so it survives recomposition
+    transactionToDelete?.let { txn ->
+        AlertDialog(
+            onDismissRequest = { transactionToDelete = null },
+            title = { Text("Delete transaction?") },
+            text = {
+                Text(
+                    "\"${txn.name}\" (${formatMoney(txn.amount)}) will be permanently deleted. This cannot be undone.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    android.util.Log.d("DeleteTxn", "CustomerCard dialog confirm tapped: id='${txn.id}' name='${txn.name}'")
+                    vm.deleteTransaction(txn.id)
+                    transactionToDelete = null
+                }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { transactionToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    val historyList by vm.settlementHistory.collectAsState()
+    val historyLoading by vm.settlementHistoryLoading.collectAsState()
 }
 
 // ── Simple list row — tapping opens the detail screen ────────────────────────
@@ -933,8 +1021,15 @@ fun CustomerDetailScreen(
 
     var showAddTransaction by remember { mutableStateOf(false) }
     var transactionToEdit by remember { mutableStateOf<CustomerTransaction?>(null) }
+    // transactionToDelete lives at screen level so the confirmation dialog survives
+    // LazyColumn item recomposition (which would destroy dialog state inside items)
+    var transactionToDelete by remember { mutableStateOf<CustomerTransaction?>(null) }
     var transactionFilter by remember { mutableStateOf(TransactionTypeFilter.ALL) }
     var showShareDialog by remember { mutableStateOf(false) }
+    var showPaidBreakdown by remember { mutableStateOf(false) }
+    var showAllHistory by remember { mutableStateOf(false) }
+    // Settled transactions are hidden by default; user can reveal them with the toggle chip
+    var showSettled by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     // Auto-reopen dialog if a draft exists for this customer (e.g. after biometric lock)
@@ -945,7 +1040,7 @@ fun CustomerDetailScreen(
         }
     }
 
-    val filteredTransactions = remember(customer.transactions, transactionFilter) {
+    val filteredTransactions = remember(customer.snapshotVersion, transactionFilter, showSettled) {
         val predicate: ((CustomerTransaction) -> Boolean)? = when (transactionFilter) {
             TransactionTypeFilter.ALL -> null
             TransactionTypeFilter.BANK_ACCOUNT -> { t -> t.accountKind == AccountKind.BANK_ACCOUNT }
@@ -957,12 +1052,33 @@ fun CustomerDetailScreen(
         // Pre-sorting by individual amount before grouping produces incorrect group order for splits.
         val visible = customer.transactions
             .filter { t -> t.isVisibleInTransactions(today) }
+            // Hide fully-settled transactions from the list by default; the user can
+            // reveal them with the "Show settled" toggle chip below the filter row.
+            .filter { t -> showSettled || !t.isSettled }
             .let { if (predicate == null) it else it.filter(predicate) }
         buildGroupedTransactions(visible)
     }
+
+    // Count of settled transactions that are currently hidden (for the toggle chip label)
+    val settledHiddenCount = remember(customer.snapshotVersion, transactionFilter, showSettled) {
+        if (showSettled) 0
+        else {
+            val predicate: ((CustomerTransaction) -> Boolean)? = when (transactionFilter) {
+                TransactionTypeFilter.ALL -> null
+                TransactionTypeFilter.BANK_ACCOUNT -> { t -> t.accountKind == AccountKind.BANK_ACCOUNT }
+                TransactionTypeFilter.CREDIT_CARD -> { t -> t.accountKind == AccountKind.CREDIT_CARD }
+                TransactionTypeFilter.PERSON -> { t -> t.accountKind == AccountKind.PERSON }
+            }
+            val today = LocalDate.now()
+            customer.transactions
+                .filter { t -> t.isVisibleInTransactions(today) && t.isSettled }
+                .let { if (predicate == null) it else it.filter(predicate) }
+                .size
+        }
+    }
     val groupedTransactions = filteredTransactions
 
-    val customerDetailDisplayData = remember(filteredTransactions) {
+    val customerDetailDisplayData = remember(customer.snapshotVersion, transactionFilter, showSettled) {
         val fd = filteredTransactions.sumOf { group ->
             group.splits.sumOf { split ->
                 if (split.isSettled) 0.0
@@ -995,7 +1111,7 @@ fun CustomerDetailScreen(
         val totalUsed: Double,
         val totalDue: Double
     )
-    val accountBreakdowns = remember(customer.transactions) {
+    val accountBreakdowns = remember(customer.snapshotVersion) {
         val today = LocalDate.now()
         val visible = customer.transactions.filter { it.isVisibleInTransactions(today) }
         val map = linkedMapOf<String, AccountBreakdown>()
@@ -1070,6 +1186,8 @@ fun CustomerDetailScreen(
         }
     }
 
+    val liveSummary = customer
+
     RadafiqBackground {
         Scaffold(
             containerColor = Color.Transparent,
@@ -1085,9 +1203,9 @@ fun CustomerDetailScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "Balance: ${formatMoney(customer.balance)}",
+                                text = "Balance: ${formatMoney(liveSummary.balance)}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (customer.balance > 0.0) warningColor()
+                                color = if (liveSummary.balance > 0.0) warningColor()
                                         else MaterialTheme.colorScheme.primary
                             )
                         }
@@ -1136,33 +1254,37 @@ fun CustomerDetailScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
+                    .radafiqScrollBackground()
                     .padding(padding)
                     .padding(horizontal = 16.dp),
                 contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Summary strip
-                item {
+                // Summary strip — keyed on snapshotVersion so LazyColumn recomposes
+                // this item immediately when data changes (lazy items won't update otherwise)
+                item(key = "summary_${customer.snapshotVersion}") {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         MetricPill(
                             label = "Used",
-                            amountValue = customer.totalAmount,
+                            amountValue = liveSummary.totalAmount,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f)
                         )
                         MetricPill(
                             label = "Paid",
-                            amountValue = customer.creditDueAmount,
+                            amountValue = liveSummary.creditDueAmount,
                             color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { showPaidBreakdown = true }
                         )
                         MetricPill(
                             label = "Balance",
-                            amountValue = customer.balance,
-                            color = if (customer.balance > 0.0) warningColor()
+                            amountValue = liveSummary.balance,
+                            color = if (liveSummary.balance > 0.0) warningColor()
                                     else MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.weight(1f)
                         )
@@ -1171,7 +1293,7 @@ fun CustomerDetailScreen(
 
                 // Savings balance chip (only if there are savings)
                 if (customer.savingsBalance > 0.0 || customer.savingsEntries.isNotEmpty()) {
-                    item {
+                    item(key = "savings_${customer.snapshotVersion}") {
                         AccentValueRow(
                             label = "Savings Balance",
                             amountValue = customer.savingsBalance,
@@ -1180,9 +1302,38 @@ fun CustomerDetailScreen(
                     }
                 }
 
+                // Settlement History button — loads all payment events across every
+                // transaction for this customer in one consolidated view
+                item(key = "history_btn_${customer.snapshotVersion}") {
+                    OutlinedButton(
+                        onClick = {
+                            showAllHistory = true
+                            vm.loadAllSettlementHistory(customer)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Restore,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Settlement History",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
                 // Account breakdown — credit card and bank account totals
                 if (accountBreakdowns.isNotEmpty()) {
-                    item {
+                    item(key = "breakdown_${customer.snapshotVersion}") {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1210,6 +1361,8 @@ fun CustomerDetailScreen(
                                     AccountKind.BANK_ACCOUNT -> "Bank Account"
                                     else -> breakdown.accountKind.label
                                 }
+                                val showDueAsPrimary = breakdown.totalDue > 0.0 &&
+                                    breakdown.totalDue != breakdown.totalUsed
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1252,17 +1405,22 @@ fun CustomerDetailScreen(
                                         }
                                         Column(horizontalAlignment = Alignment.End) {
                                             AnimatedMoney(
-                                                value = breakdown.totalUsed,
-                                                style = MaterialTheme.typography.bodySmall,
+                                                value = if (showDueAsPrimary) breakdown.totalDue else breakdown.totalUsed,
+                                                style = if (showDueAsPrimary) MaterialTheme.typography.bodyMedium
+                                                        else MaterialTheme.typography.bodySmall,
                                                 fontWeight = FontWeight.Bold,
-                                                color = accent
+                                                color = if (showDueAsPrimary) warningColor() else accent
                                             )
                                             Text(
-                                                text = if (breakdown.totalDue > 0.0)
-                                                    "Due ${formatMoney(breakdown.totalDue)}"
-                                                else "✓ Settled",
+                                                text = if (breakdown.totalDue > 0.0) {
+                                                    if (showDueAsPrimary) "Total ${formatMoney(breakdown.totalUsed)}"
+                                                    else "Due ${formatMoney(breakdown.totalDue)}"
+                                                } else {
+                                                    "✓ Settled"
+                                                },
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = if (breakdown.totalDue > 0.0) warningColor()
+                                                color = if (breakdown.totalDue > 0.0 && !showDueAsPrimary) warningColor()
+                                                        else if (showDueAsPrimary) MaterialTheme.colorScheme.onSurfaceVariant
                                                         else MaterialTheme.colorScheme.primary
                                             )
                                         }
@@ -1330,10 +1488,47 @@ fun CustomerDetailScreen(
 
                 // Filter chips
                 item {
-                    TransactionFilterChips(
-                        selectedFilter = transactionFilter,
-                        onFilterSelected = { transactionFilter = it }
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TransactionFilterChips(
+                            selectedFilter = transactionFilter,
+                            onFilterSelected = { transactionFilter = it }
+                        )
+                        // Settled visibility toggle chip
+                        val chipLabel = if (showSettled) "Hide Settled"
+                                        else if (settledHiddenCount > 0) "$settledHiddenCount Settled"
+                                        else null
+                        if (chipLabel != null || showSettled) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(
+                                        if (showSettled) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (showSettled) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                        RoundedCornerShape(999.dp)
+                                    )
+                                    .clickable { showSettled = !showSettled }
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = if (showSettled) "Hide Settled" else "${settledHiddenCount} Settled",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (showSettled) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
                 }
 
                 if (filteredTransactions.isEmpty()) {
@@ -1379,7 +1574,7 @@ fun CustomerDetailScreen(
                                     transaction = transaction,
                                     runningBalance = runningBal,
                                     onEdit = { transactionToEdit = transaction },
-                                    onDelete = { vm.deleteTransaction(transaction.id) },
+                                    onDelete = { transactionToDelete = transaction },
                                     onSettledChange = { vm.toggleTransactionSettled(transaction.id, it) },
                                     onPartialPayment = { amount -> vm.addPartialPayment(transaction.id, amount) }
                                 )
@@ -1397,7 +1592,7 @@ fun CustomerDetailScreen(
             selectedAccountIds = selectedAccountIds,
             transaction = null,
             onDismiss = { showAddTransaction = false },
-            onSave = { transactionName, accountId, accountName, accountKind, amount, transactionDate, personName ->
+            onSave = { transactionName, accountId, accountName, accountKind, amount, transactionDate, personName, _ ->
                 vm.addTransaction(
                     customerId = customer.id,
                     transactionName = transactionName,
@@ -1445,7 +1640,7 @@ fun CustomerDetailScreen(
             selectedAccountIds = selectedAccountIds,
             transaction = transaction,
             onDismiss = { transactionToEdit = null },
-            onSave = { transactionName, accountId, accountName, accountKind, amount, transactionDate, personName ->
+            onSave = { transactionName, accountId, accountName, accountKind, amount, transactionDate, personName, dueDate ->
                 vm.updateTransaction(
                     transactionId = transaction.id,
                     transactionName = transactionName,
@@ -1454,7 +1649,8 @@ fun CustomerDetailScreen(
                     accountKind = accountKind,
                     amount = amount,
                     transactionDate = transactionDate,
-                    personName = personName
+                    personName = personName,
+                    dueDate = if (transaction.isEmi) dueDate else ""
                 )
                 transactionToEdit = null
             },
@@ -1475,10 +1671,45 @@ fun CustomerDetailScreen(
         )
     }
 
+    // Delete confirmation — lives at screen level so it survives LazyColumn recomposition
+    transactionToDelete?.let { txn ->
+        AlertDialog(
+            onDismissRequest = { transactionToDelete = null },
+            title = { Text("Delete transaction?") },
+            text = {
+                Text(
+                    "\"${txn.name}\" (${formatMoney(txn.amount)}) will be permanently deleted. This cannot be undone.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    android.util.Log.d("DeleteTxn", "Dialog confirm tapped: id='${txn.id}' name='${txn.name}'")
+                    vm.deleteTransaction(txn.id)
+                    transactionToDelete = null
+                }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { transactionToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     if (showShareDialog) {
         ShareStatementDialog(
             customer = customer,
             onDismiss = { showShareDialog = false }
+        )
+    }
+
+    if (showPaidBreakdown) {
+        PaidBreakdownDialog(
+            customer = customer,
+            onDismiss = { showPaidBreakdown = false }
         )
     }
 
@@ -1554,6 +1785,20 @@ fun CustomerDetailScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+
+    val historyList by vm.settlementHistory.collectAsState()
+    val historyLoading by vm.settlementHistoryLoading.collectAsState()
+
+    // ── Consolidated settlement history dialog ────────────────────────────────
+    val allHistory by vm.allSettlementHistory.collectAsState()
+    val allHistoryLoading by vm.allSettlementHistoryLoading.collectAsState()
+    if (showAllHistory) {
+        AllSettlementHistoryDialog(
+            history = allHistory,
+            loading = allHistoryLoading,
+            onDismiss = { showAllHistory = false }
         )
     }
 }
@@ -1700,6 +1945,9 @@ fun TransactionRow(
     var showPartialPaymentDialog by remember { mutableStateOf(false) }
     var showSettleConfirm by remember { mutableStateOf<Boolean?>(null) } // null=hidden, true=marking paid, false=marking unpaid
     val remaining = (transaction.amount - transaction.partialPaidAmount).coerceAtLeast(0.0)
+    val showRemainingAsPrimary = !transaction.isSettled &&
+        transaction.partialPaidAmount > 0.0 &&
+        remaining != transaction.amount
 
     Column(
         modifier = Modifier
@@ -1764,7 +2012,7 @@ fun TransactionRow(
             // Right: amount + action icons
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = formatMoney(transaction.amount),
+                    text = formatMoney(if (showRemainingAsPrimary) remaining else transaction.amount),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold,
                     textDecoration = lineThrough,
@@ -1787,7 +2035,10 @@ fun TransactionRow(
                             modifier = Modifier.size(16.dp)
                         )
                     }
-                    IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = {
+                        android.util.Log.d("DeleteTxn", "Delete icon tapped: id='${transaction.id}' name='${transaction.name}'")
+                        onDelete()
+                    }, modifier = Modifier.size(32.dp)) {
                         Icon(
                             Icons.Filled.Delete,
                             contentDescription = "Delete",
@@ -1812,10 +2063,13 @@ fun TransactionRow(
                     color = MaterialTheme.colorScheme.secondary
                 )
                 Text(
-                    text = "Remaining: ${formatMoney(remaining)}",
+                    text = if (showRemainingAsPrimary) "Total: ${formatMoney(transaction.amount)}"
+                           else "Remaining: ${formatMoney(remaining)}",
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (remaining > 0.0) warningColor() else MaterialTheme.colorScheme.primary
+                    color = if (showRemainingAsPrimary) MaterialTheme.colorScheme.onSurfaceVariant
+                            else if (remaining > 0.0) warningColor()
+                            else MaterialTheme.colorScheme.primary
                 )
             }
         }
@@ -1895,6 +2149,7 @@ fun TransactionRow(
             }
         )
     }
+
 }
 
 @Composable
@@ -1955,6 +2210,237 @@ private fun PartialPaymentDialog(
 }
 
 @Composable
+fun SettlementHistoryDialog(
+    title: String,
+    history: List<SettlementHistoryEntry>,
+    loading: Boolean,
+    onDismiss: () -> Unit
+) {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = if (useDarkTheme) Color(0xFF141430) else MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        title = {
+            Text(
+                text = "Settlement History — $title",
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        text = {
+            if (loading) {
+                Text(
+                    text = "Loading...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else if (history.isEmpty()) {
+                Text(
+                    text = "No settlement history recorded yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    history.forEach { entry ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = entry.label,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = when (entry.type) {
+                                        "settled" -> MaterialTheme.colorScheme.primary
+                                        "partial" -> MaterialTheme.colorScheme.secondary
+                                        "unsettled" -> MaterialTheme.colorScheme.error
+                                        else -> MaterialTheme.colorScheme.onSurface
+                                    }
+                                )
+                                Text(
+                                    text = entry.date,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = formatMoney(entry.amount),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        if (history.last() != entry) {
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                                thickness = 0.5.dp
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
+
+/**
+ * Customer-level consolidated settlement history dialog — shows every payment
+ * event across all of this customer's transactions in a single list, sorted
+ * newest-first.  Each row displays the transaction name, event type (Fully
+ * Settled / Partial Payment / Marked Unpaid), date, and amount — mirroring
+ * the web app's "Settlement History" modal.
+ */
+@Composable
+private fun AllSettlementHistoryDialog(
+    history: List<CustomerSettlementEntry>,
+    loading: Boolean,
+    onDismiss: () -> Unit
+) {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = if (useDarkTheme) Color(0xFF141430) else MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Restore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = "Settlement History",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        },
+        text = {
+            when {
+                loading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(32.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Loading history…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                history.isEmpty() -> {
+                    Text(
+                        text = "No settlement history recorded yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+                else -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        history.forEachIndexed { index, entry ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                // Left column: transaction name + type label + date
+                                Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                    Text(
+                                        text = entry.transactionName,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = entry.label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = when (entry.type) {
+                                            "settled"   -> MaterialTheme.colorScheme.primary
+                                            "partial"   -> MaterialTheme.colorScheme.secondary
+                                            "unsettled" -> MaterialTheme.colorScheme.error
+                                            else        -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        modifier = Modifier.padding(top = 2.dp)
+                                    )
+                                    Text(
+                                        text = entry.date,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(top = 1.dp)
+                                    )
+                                }
+                                // Right column: amount
+                                Text(
+                                    text = formatMoney(entry.amount),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = when (entry.type) {
+                                        "settled"   -> MaterialTheme.colorScheme.primary
+                                        "partial"   -> MaterialTheme.colorScheme.secondary
+                                        "unsettled" -> MaterialTheme.colorScheme.error
+                                        else        -> MaterialTheme.colorScheme.onSurface
+                                    }
+                                )
+                            }
+                            if (index < history.lastIndex) {
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                                    thickness = 0.5.dp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
+
+@Composable
 fun TransactionEditorDialog(
     customer: CustomerSummary,
     selectedAccountIds: Set<String>,
@@ -1967,7 +2453,8 @@ fun TransactionEditorDialog(
         accountKind: AccountKind,
         amount: String,
         transactionDate: String,
-        personName: String
+        personName: String,
+        dueDate: String
     ) -> Unit,
     onSaveSplit: ((
         transactionName: String,
@@ -2004,7 +2491,7 @@ fun TransactionEditorDialog(
 
     // Compute "frequently used" account IDs from ALL customers' transaction history
     val allCustomers by vm.customers.collectAsState()
-    val frequentAccountIds = remember(allCustomers) {
+    val frequentAccountIds = remember(allCustomers.sumOf { it.snapshotVersion }) {
         val freq = mutableMapOf<String, Int>()
         for (c in allCustomers) {
             for (t in c.transactions) {
@@ -2041,6 +2528,11 @@ fun TransactionEditorDialog(
             else transaction?.transactionDate?.ifBlank { LocalDate.now().toString() }
                 ?: LocalDate.now().toString()
         )
+    }
+
+    // Due date — only editable when editing an existing EMI installment
+    var dueDate by remember(transaction?.id) {
+        mutableStateOf(transaction?.dueDate.orEmpty())
     }
 
     // EMI state — only for new credit card transactions
@@ -2111,7 +2603,7 @@ fun TransactionEditorDialog(
     val firstOverride = emiFirstMonthOverride.toDoubleOrNull()
         ?.takeIf { it > 0.0 }
 
-    val accountOptions = remember(selectedKind, selectedAccountIds, transaction?.accountId, customer.transactions) {
+    val accountOptions = remember(selectedKind, selectedAccountIds, transaction?.accountId, customer.snapshotVersion) {
         selectedAccountOptions(
             accountKind = selectedKind,
             selectedAccountIds = selectedAccountIds,
@@ -2633,7 +3125,8 @@ fun TransactionEditorDialog(
                             selectedKind,
                             amount.toString(),
                             transactionDate,
-                            if (isPerson) personName.trim() else ""
+                            if (isPerson) personName.trim() else "",
+                            if (isEditingEmi) dueDate else ""
                         )
                     }
                     vm.clearDraftTransaction()
@@ -2915,6 +3408,7 @@ private fun SplitTransactionRow(
         if (split.isSettled) 0.0 else (split.amount - split.partialPaidAmount).coerceAtLeast(0.0)
     }
     val allSettled = group.splits.all { it.isSettled }
+    val showDueAsPrimary = !allSettled && totalDue > 0.0 && totalDue != total
     val lineThrough = if (allSettled) TextDecoration.LineThrough else TextDecoration.None
     val contentAlpha = if (allSettled) 0.56f else 1f
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -2975,13 +3469,20 @@ private fun SplitTransactionRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = formatMoney(total),
+                        text = formatMoney(if (showDueAsPrimary) totalDue else total),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         textDecoration = lineThrough,
                         color = warningColor().copy(alpha = contentAlpha)
                     )
-                    if (!allSettled) {
+                    if (showDueAsPrimary) {
+                        Text(
+                            text = "Total ${formatMoney(total)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 1.dp)
+                        )
+                    } else if (!allSettled) {
                         Text(
                             text = "Due ${formatMoney(totalDue)}",
                             style = MaterialTheme.typography.labelSmall,
@@ -3030,6 +3531,9 @@ private fun SplitTransactionRow(
             group.splits.forEach { split ->
                 val splitDue = if (split.isSettled) 0.0
                                else (split.amount - split.partialPaidAmount).coerceAtLeast(0.0)
+                val showSplitDueAsPrimary = !split.isSettled &&
+                    split.partialPaidAmount > 0.0 &&
+                    splitDue != split.amount
                 val accent = accountAccent(split.accountKind)
                 val displayName = if (split.accountKind == AccountKind.PERSON && split.personName.isNotBlank())
                     split.personName else split.accountName
@@ -3079,17 +3583,19 @@ private fun SplitTransactionRow(
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = formatMoney(split.amount),
+                                text = formatMoney(if (showSplitDueAsPrimary) splitDue else split.amount),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = accent
                             )
                             Text(
                                 text = if (split.isSettled) "✓ Settled"
-                                       else if (split.partialPaidAmount > 0.0) "Partial • Due ${formatMoney(splitDue)}"
+                                       else if (showSplitDueAsPrimary) "Total ${formatMoney(split.amount)}"
                                        else "Due ${formatMoney(splitDue)}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (split.isSettled) MaterialTheme.colorScheme.primary else warningColor()
+                                color = if (split.isSettled) MaterialTheme.colorScheme.primary
+                                        else if (showSplitDueAsPrimary) MaterialTheme.colorScheme.onSurfaceVariant
+                                        else warningColor()
                             )
                         }
                     }
@@ -4080,4 +4586,258 @@ private fun ShareStatementDialog(
             }
         )
     }
+}
+
+@Composable
+private fun PaidBreakdownDialog(
+    customer: CustomerSummary,
+    onDismiss: () -> Unit
+) {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+    val today = LocalDate.now()
+
+    data class PaidEntry(
+        val transactionName: String,
+        val accountName: String,
+        val accountKind: AccountKind,
+        val paidAmount: Double,
+        val totalAmount: Double,
+        val isFullyPaid: Boolean,
+        val date: String
+    )
+
+    val paidEntries = remember(customer.snapshotVersion) {
+        val visible = customer.transactions.filter { it.isVisibleInTransactions(today) }
+        val entries = mutableListOf<PaidEntry>()
+        for (t in visible) {
+            if (t.isSettled) {
+                entries.add(
+                    PaidEntry(
+                        transactionName = t.name,
+                        accountName = t.accountName,
+                        accountKind = t.accountKind,
+                        paidAmount = t.amount,
+                        totalAmount = t.amount,
+                        isFullyPaid = true,
+                        date = t.settledDate.ifEmpty { t.transactionDate }
+                    )
+                )
+            } else if (t.partialPaidAmount > 0.0) {
+                entries.add(
+                    PaidEntry(
+                        transactionName = t.name,
+                        accountName = t.accountName,
+                        accountKind = t.accountKind,
+                        paidAmount = t.partialPaidAmount,
+                        totalAmount = t.amount,
+                        isFullyPaid = false,
+                        date = t.transactionDate
+                    )
+                )
+            }
+        }
+        entries.sortedByDescending { it.date }
+    }
+
+    val groupedByAccount = remember(paidEntries) {
+        paidEntries.groupBy { it.accountName }
+    }
+
+    val totalPaidFromTxns = remember(paidEntries) {
+        paidEntries.sumOf { it.paidAmount }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = if (useDarkTheme) Color(0xFF141430) else MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        title = {
+            Column {
+                Text(
+                    text = "Payment Breakdown",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                if (customer.manualPaidAmount > 0.0) {
+                    Text(
+                        text = "Includes manual adjustment: ${formatMoney(customer.manualPaidAmount)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                if (paidEntries.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Paid via transactions",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = formatMoney(totalPaidFromTxns),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                }
+
+                if (paidEntries.isEmpty() && customer.manualPaidAmount <= 0.0) {
+                    Text(
+                        text = "No payment records found.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+
+                if (paidEntries.isNotEmpty()) {
+                    val byDateOverall = paidEntries.groupBy { it.date }
+                    Text(
+                        text = "Daily Total",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        byDateOverall.toSortedMap(compareByDescending { it }).forEach { (date, dateEntries) ->
+                            val dayTotal = dateEntries.sumOf { it.paidAmount }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = date,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = formatMoney(dayTotal),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                groupedByAccount.forEach { (accountName, entries) ->
+                    val accent = accountAccent(entries.first().accountKind)
+                    val groupedByDate = entries.groupBy { it.date }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(accent.copy(alpha = 0.07f))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = accountName,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = accent
+                        )
+
+                        groupedByDate.forEach { (date, dateEntries) ->
+                            val dateTotal = dateEntries.sumOf { it.paidAmount }
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 2.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = date,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = formatMoney(dateTotal),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                }
+
+                                dateEntries.forEach { entry ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = entry.transactionName,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text(
+                                                text = formatMoney(entry.paidAmount),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (entry.isFullyPaid) MaterialTheme.colorScheme.secondary
+                                                        else MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = if (entry.isFullyPaid) "✓ Fully Paid"
+                                                        else "Partial — Due ${formatMoney(entry.totalAmount - entry.paidAmount)}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (entry.isFullyPaid) MaterialTheme.colorScheme.secondary
+                                                        else warningColor()
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            if (dateEntries != groupedByDate.entries.last().value) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
 }

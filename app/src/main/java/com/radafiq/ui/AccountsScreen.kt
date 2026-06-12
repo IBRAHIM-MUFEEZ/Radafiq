@@ -61,12 +61,14 @@ fun AccountsScreen(
 ) {
     val allCards by vm.cards.collectAsState()
     val customers by vm.customers.collectAsState()
-    val usedAccountIds = remember(customers) {
+    // snapshotKey changes on every Firestore snapshot so remember caches always invalidate
+    val snapshotKey = customers.sumOf { it.snapshotVersion }
+    val usedAccountIds = remember(snapshotKey) {
         val set = mutableSetOf<String>()
         customers.forEach { c -> c.transactions.forEach { set.add(it.accountId) } }
         set
     }
-    val cards = remember(allCards, usedAccountIds) {
+    val cards = remember(snapshotKey) {
         if (usedAccountIds.isEmpty()) emptyList()
         else allCards.filter { it.id in usedAccountIds }
     }
@@ -75,7 +77,7 @@ fun AccountsScreen(
 
     // Aggregate person transactions for the Accounts tab
     data class PersonEntry(val accountId: String, val name: String, val used: Double, val due: Double)
-    val personCards = remember(customers) {
+    val personCards = remember(snapshotKey) {
         val map = linkedMapOf<String, PersonEntry>()
         customers.forEach { customer ->
             customer.transactions
@@ -97,6 +99,7 @@ fun AccountsScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
+            .radafiqScrollBackground()
             .padding(horizontal = 16.dp),
         contentPadding = PaddingValues(top = 16.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -160,6 +163,19 @@ fun AccountsScreen(
                     PersonAccountRow(name = entry.name, usedAmount = entry.used, dueAmount = entry.due)
                 }
             }
+
+            // Savings section — customers who have a positive savings balance
+            val savingsCustomers = customers.filter { it.savingsBalance > 0.0 }
+                .sortedByDescending { it.savingsBalance }
+            if (savingsCustomers.isNotEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    AccountSectionTitle("Savings")
+                }
+                items(savingsCustomers, key = { "savings_${it.id}" }) { c ->
+                    SavingsAccountRow(customer = c)
+                }
+            }
         }
     }
 }
@@ -169,6 +185,7 @@ fun AccountListRow(
     card: CardSummary,
     onClick: () -> Unit
 ) {
+    var showBalance by remember { mutableStateOf(true) }
     FlowCard(
         accentColor = accountAccent(card.accountKind),
         modifier = Modifier.clickable(onClick = onClick)
@@ -193,15 +210,19 @@ fun AccountListRow(
                     modifier = Modifier.padding(top = 2.dp)
                 )
             }
-            Column(horizontalAlignment = Alignment.End) {
+            Column(
+                horizontalAlignment = Alignment.End,
+                modifier = Modifier.clickable { showBalance = !showBalance }
+            ) {
                 AnimatedMoney(
-                    value = card.bill,
+                    value = if (showBalance) card.payable else card.bill,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = accountAccent(card.accountKind)
+                    color = if (showBalance && card.payable > 0.0) warningColor() else accountAccent(card.accountKind),
+                    animationKey = showBalance
                 )
                 Text(
-                    text = "Total used",
+                    text = if (showBalance) "Balance" else "Total used",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -228,6 +249,7 @@ private fun PersonAccountRow(
     dueAmount: Double
 ) {
     val accent = accountAccent(AccountKind.PERSON)
+    var showBalance by remember { mutableStateOf(true) }
     FlowCard(accentColor = accent) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -243,21 +265,77 @@ private fun PersonAccountRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "Person • Used ${formatMoney(usedAmount)}",
+                    text = if (showBalance) "Person • Used ${formatMoney(usedAmount)}" else "Person • Balance ${formatMoney(dueAmount)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp)
                 )
             }
-            Column(horizontalAlignment = Alignment.End) {
+            Column(
+                horizontalAlignment = Alignment.End,
+                modifier = Modifier.clickable { showBalance = !showBalance }
+            ) {
                 AnimatedMoney(
-                    value = dueAmount,
+                    value = if (showBalance) dueAmount else usedAmount,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = if (dueAmount > 0.0) warningColor() else accent
+                    color = if (showBalance && dueAmount > 0.0) warningColor() else accent,
+                    animationKey = showBalance
                 )
                 Text(
-                    text = if (dueAmount > 0.0) "Due" else "Settled",
+                    text = if (showBalance) (if (dueAmount > 0.0) "Balance" else "Settled") else "Total used",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavingsAccountRow(customer: com.radafiq.data.models.CustomerSummary) {
+    val accent = MaterialTheme.colorScheme.secondary
+    var showDeposited by remember { mutableStateOf(false) }
+    val totalDeposited = customer.savingsEntries
+        .filter { it.type == com.radafiq.data.models.SavingsType.DEPOSIT }.sumOf { it.amount }
+    val latestBankName = customer.savingsEntries
+        .filter { it.bankAccountName.isNotBlank() }
+        .maxByOrNull { it.date }?.bankAccountName
+
+    FlowCard(accentColor = accent) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = customer.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = if (latestBankName != null) "🏦 $latestBankName" else "Savings",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = accent,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+            Column(
+                horizontalAlignment = Alignment.End,
+                modifier = Modifier.clickable { showDeposited = !showDeposited }
+            ) {
+                AnimatedMoney(
+                    value = if (showDeposited) totalDeposited else customer.savingsBalance,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = accent,
+                    animationKey = showDeposited
+                )
+                Text(
+                    text = if (showDeposited) "Total Deposited" else "Balance",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -735,8 +813,9 @@ fun AccountDetailScreen(
         return
     }
 
+    val snapshotKey = customers.sumOf { it.snapshotVersion }
     // Customers that have at least one transaction on this account
-    val accountCustomers = remember(customers, accountId) {
+    val accountCustomers = remember(snapshotKey, accountId) {
         customers.mapNotNull { customer ->
             val txns = customer.transactions.filter { it.accountId == accountId && it.isVisibleInTransactions() }
             if (txns.isEmpty()) null
@@ -786,6 +865,7 @@ fun AccountDetailScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
+                    .radafiqScrollBackground()
                     .padding(padding)
                     .padding(horizontal = 16.dp),
                 contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp),

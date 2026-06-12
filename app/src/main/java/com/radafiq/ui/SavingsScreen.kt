@@ -114,13 +114,15 @@ fun CustomerSavingsScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
+                    .radafiqScrollBackground()
                     .padding(padding)
                     .padding(horizontal = 16.dp),
                 contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Balance hero
-                item {
+                // Balance hero — keyed on snapshotVersion so LazyColumn recomposes
+                // this item immediately when savings data changes
+                item(key = "balance_${customer.snapshotVersion}") {
                     SavingsBalanceCard(
                         customer = customer,
                         onDeposit   = { showDepositDialog = true },
@@ -129,7 +131,7 @@ fun CustomerSavingsScreen(
                 }
 
                 // History header
-                item {
+                item(key = "header_${customer.snapshotVersion}") {
                     Text(
                         text = "HISTORY",
                         style = MaterialTheme.typography.labelMedium,
@@ -140,7 +142,7 @@ fun CustomerSavingsScreen(
                 }
 
                 if (customer.savingsEntries.isEmpty()) {
-                    item {
+                    item(key = "empty_${customer.snapshotVersion}") {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -230,7 +232,7 @@ private fun SavingsBalanceCard(
     data class BankBreakdown(val name: String, val deposited: Double, val withdrawn: Double) {
         val balance: Double get() = (deposited - withdrawn).coerceAtLeast(0.0)
     }
-    val bankBreakdown = remember(customer.savingsEntries) {
+    val bankBreakdown = remember(customer.snapshotVersion) {
         val map = linkedMapOf<String, BankBreakdown>()
         customer.savingsEntries.forEach { e ->
             if (e.bankAccountId.isBlank()) return@forEach
@@ -362,7 +364,7 @@ private fun SavingsBalanceCard(
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Add, contentDescription = "Deposit", modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Deposit")
                 }
@@ -372,7 +374,7 @@ private fun SavingsBalanceCard(
                     enabled = customer.savingsBalance > 0.0,
                     colors = ButtonDefaults.buttonColors(containerColor = warningColor())
                 ) {
-                    Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Remove, contentDescription = "Withdraw", modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Withdraw")
                 }
@@ -407,7 +409,7 @@ private fun SavingsEntryRow(
             ) {
                 Icon(
                     imageVector = if (isDeposit) Icons.Default.Add else Icons.Default.Remove,
-                    contentDescription = null,
+                    contentDescription = entry.type.label,
                     tint = accentColor,
                     modifier = Modifier.size(18.dp)
                 )
@@ -416,12 +418,24 @@ private fun SavingsEntryRow(
             Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = entry.type.label,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = accentColor
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = entry.type.label,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = accentColor
+                    )
+                    Text(
+                        text = formatDisplayDate(entry.date),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 if (isDeposit && entry.bankAccountName.isNotBlank()) {
                     Text(
                         text = "🏦 ${entry.bankAccountName}",
@@ -441,14 +455,10 @@ private fun SavingsEntryRow(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 1.dp)
                     )
                 }
-                Text(
-                    text = entry.date,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
             Column(horizontalAlignment = Alignment.End) {
@@ -527,17 +537,21 @@ private fun SavingsEntryDialog(
                             trailingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = null
+                                    contentDescription = "Select bank account"
                                 )
                             },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        // Invisible overlay to capture clicks
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .matchParentSize()
                                 .clickable { bankDropdownExpanded = true }
                         )
                         DropdownMenu(
                             expanded = bankDropdownExpanded,
-                            onDismissRequest = { bankDropdownExpanded = false },
-                            modifier = Modifier.fillMaxWidth()
+                            onDismissRequest = { bankDropdownExpanded = false }
+                            // No fillMaxWidth — let it size naturally to content
                         ) {
                             DropdownMenuItem(
                                 text = { Text("— No specific account —") },
@@ -549,7 +563,7 @@ private fun SavingsEntryDialog(
                             )
                             allBankAccounts.forEach { acct ->
                                 DropdownMenuItem(
-                                    text = { Text(acct.name) },
+                                    text = { Text(acct.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     onClick = {
                                         selectedBankId = acct.id
                                         selectedBankName = acct.name

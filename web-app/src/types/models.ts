@@ -281,6 +281,28 @@ export interface AppSettings {
   lastDriveRestoreTime: string | null;
 }
 
+// ── Settlement History ─────────────────────────────────────────────────────────
+
+export interface SettlementHistoryEntry {
+  id: string;
+  transactionId: string;
+  customerId: string;
+  type: 'settled' | 'partial' | 'unsettled';
+  amount: number;
+  previousPartialPaid: number;
+  newPartialPaid: number;
+  previousIsSettled: boolean;
+  newIsSettled: boolean;
+  date: string;
+  timestamp: number;
+}
+
+export const SETTLEMENT_TYPE_LABELS: Record<string, string> = {
+  settled: 'Fully Settled',
+  partial: 'Partial Payment',
+  unsettled: 'Marked Unpaid',
+};
+
 // ── App Security ──────────────────────────────────────────────────────────────
 
 export interface AppSecurityState {

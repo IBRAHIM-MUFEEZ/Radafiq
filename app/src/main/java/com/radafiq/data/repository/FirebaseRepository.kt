@@ -4,12 +4,14 @@ import com.radafiq.data.models.AccountKind
 import com.radafiq.data.models.AppData
 import com.radafiq.data.models.BackupRecord
 import com.radafiq.data.models.CardSummary
+import com.radafiq.data.models.CustomerSettlementEntry
 import com.radafiq.data.models.CustomerSummary
 import com.radafiq.data.models.CustomerTransaction
 import com.radafiq.data.models.FirestoreBackupPayload
 import com.radafiq.data.models.IndianAccountCatalog
 import com.radafiq.data.models.SavingsEntry
 import com.radafiq.data.models.SavingsType
+import com.radafiq.data.models.SettlementHistoryEntry
 import com.radafiq.data.auth.LocalIdentityRepository
 import com.google.android.gms.tasks.Task
 import com.google.firebase.firestore.DocumentReference
@@ -17,9 +19,12 @@ import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.Source
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.tasks.await
 
 class FirebaseRepository(
@@ -154,6 +159,21 @@ class FirebaseRepository(
                 SetOptions.merge()
             )
             .await()
+        // Record settlement history
+        val currentDoc = transactionsCollection().document(transactionId).get().await()
+        val previousPartialPaid = currentDoc.getDouble("partialPaidAmount") ?: 0.0
+        val previousIsSettled = currentDoc.getBoolean("isSettled") != true
+        recordSettlementHistory(
+            transactionId = transactionId,
+            customerId = currentDoc.getString("customerId") ?: "",
+            type = if (isSettled) "settled" else "unsettled",
+            amount = currentDoc.getDouble("amount") ?: 0.0,
+            previousPartialPaid = previousPartialPaid,
+            newPartialPaid = previousPartialPaid,
+            previousIsSettled = previousIsSettled,
+            newIsSettled = isSettled,
+            date = if (isSettled) settledDate else java.time.LocalDate.now().toString()
+        )
     }
 
     suspend fun addTransaction(
@@ -231,6 +251,17 @@ class FirebaseRepository(
         batch.commit().await()
     }
 
+    /**
+     * Only updates the dueDate field on an EMI installment document.
+     * transactionDate is computed from dueDate at read time, so no write needed for it.
+     */
+    suspend fun updateEmiDueDate(transactionId: String, dueDate: String) {
+        transactionsCollection()
+            .document(transactionId)
+            .update("dueDate", dueDate)
+            .await()
+    }
+
     suspend fun updateTransaction(
         transactionId: String,
         transactionName: String,
@@ -239,7 +270,8 @@ class FirebaseRepository(
         accountKind: AccountKind,
         amount: Double,
         transactionDate: String,
-        personName: String = ""
+        personName: String = "",
+        dueDate: String = ""
     ) {
         val data = mutableMapOf<String, Any?>(
             "transactionName" to transactionName,
@@ -248,9 +280,10 @@ class FirebaseRepository(
             "accountType" to accountKind.storageValue,
             "amount" to amount,
             "transactionDate" to transactionDate,
-            "givenDate" to transactionDate,
-            "dueDate" to FieldValue.delete()
+            "givenDate" to transactionDate
         )
+        if (dueDate.isNotBlank()) data["dueDate"] = dueDate
+        else data["dueDate"] = FieldValue.delete()
         if (personName.isNotBlank()) data["personName"] = personName
         else data["personName"] = FieldValue.delete()
 
@@ -280,6 +313,20 @@ class FirebaseRepository(
                 SetOptions.merge()
             )
             .await()
+        // Record partial payment history
+        val currentDoc = transactionsCollection().document(transactionId).get().await()
+        val previousPartialPaid = (currentDoc.getDouble("partialPaidAmount") ?: 0.0) - amount
+        recordSettlementHistory(
+            transactionId = transactionId,
+            customerId = currentDoc.getString("customerId") ?: "",
+            type = "partial",
+            amount = amount,
+            previousPartialPaid = previousPartialPaid,
+            newPartialPaid = previousPartialPaid + amount,
+            previousIsSettled = currentDoc.getBoolean("isSettled") == true,
+            newIsSettled = false,
+            date = date
+        )
     }
 
     suspend fun addPayment(
@@ -345,15 +392,19 @@ class FirebaseRepository(
         var paymentsReady = false
         var savingsReady = false
 
+        var snapshotVersion = 0L
+
         fun notifyIfReady() {
             if (customersReady && accountsReady && transactionsReady && paymentsReady && savingsReady) {
+                snapshotVersion++
                 onResult(
                     buildAppData(
                         customers = latestCustomers,
                         accounts = latestAccounts,
                         transactions = latestTransactions,
                         payments = latestPayments,
-                        savings = latestSavings
+                        savings = latestSavings,
+                        snapshotVersion = snapshotVersion
                     )
                 )
             }
@@ -421,7 +472,11 @@ class FirebaseRepository(
         profile: Map<String, Any?> = emptyMap(),
         settings: Map<String, Any?> = emptyMap()
     ): FirestoreBackupPayload {
-        val customers = customersCollection().get().await().documents.map { document ->
+        // Use Source.CACHE so exportBackup reads from the local Firestore cache rather than
+        // making network requests. The snapshot listeners keep the cache up-to-date, so the
+        // data is always fresh. This prevents exportBackup from hanging when offline or on a
+        // weak connection, which was blocking the viewModelScope and delaying UI updates.
+        val customers = customersCollection().get(Source.CACHE).await().documents.map { document ->
             BackupRecord(
                 id = document.id,
                 fields = mapOf(
@@ -431,7 +486,7 @@ class FirebaseRepository(
                 )
             )
         }
-        val accounts = accountsCollection().get().await().documents.map { document ->
+        val accounts = accountsCollection().get(Source.CACHE).await().documents.map { document ->
             BackupRecord(
                 id = document.id,
                 fields = mapOf(
@@ -449,7 +504,7 @@ class FirebaseRepository(
                 )
             )
         }
-        val transactions = transactionsCollection().get().await().documents.map { document ->
+        val transactions = transactionsCollection().get(Source.CACHE).await().documents.map { document ->
             BackupRecord(
                 id = document.id,
                 fields = mapOf(
@@ -486,7 +541,7 @@ class FirebaseRepository(
                 )
             )
         }
-        val payments = paymentsCollection().get().await().documents.map { document ->
+        val payments = paymentsCollection().get(Source.CACHE).await().documents.map { document ->
             BackupRecord(
                 id = document.id,
                 fields = mapOf(
@@ -499,7 +554,7 @@ class FirebaseRepository(
             )
         }
 
-        val savings = savingsCollection().get().await().documents.map { document ->
+        val savings = savingsCollection().get(Source.CACHE).await().documents.map { document ->
             BackupRecord(
                 id = document.id,
                 fields = mapOf(
@@ -606,7 +661,8 @@ class FirebaseRepository(
         accounts: List<DocumentSnapshot>,
         transactions: List<DocumentSnapshot>,
         payments: List<DocumentSnapshot>,
-        savings: List<DocumentSnapshot>
+        savings: List<DocumentSnapshot>,
+        snapshotVersion: Long = 0L
     ): AppData {
         val accountTotals = linkedMapOf<String, RunningAccountTotal>()
 
@@ -746,7 +802,7 @@ class FirebaseRepository(
                         accountName = accountName,
                         accountKind = accountKind,
                         amount = amount,
-                        transactionDate = transaction.getString("transactionDate")
+                        _transactionDate = transaction.getString("transactionDate")
                             ?: transaction.getString("givenDate")
                             ?: "",
                         isSettled = isSettled,
@@ -825,8 +881,8 @@ class FirebaseRepository(
             deletedCustomerTotals[customerId]?.savingsEntries?.add(entry)
         }
 
-        val customerSummaries = customerTotals.values.map { total -> total.toSummary() }
-        val deletedCustomerSummaries = deletedCustomerTotals.values.map { total -> total.toSummary() }
+        val customerSummaries = customerTotals.values.map { total -> total.toSummary(snapshotVersion) }
+        val deletedCustomerSummaries = deletedCustomerTotals.values.map { total -> total.toSummary(snapshotVersion) }
 
         return AppData(
             accounts = accountSummaries,
@@ -835,7 +891,7 @@ class FirebaseRepository(
         )
     }
 
-    private fun RunningCustomerTotal.toSummary(): CustomerSummary {
+    private fun RunningCustomerTotal.toSummary(snapshotVersion: Long = 0L): CustomerSummary {
         // totalAmount already excludes future EMIs (set in buildAppData)
         // Use isVisibleInTransactions() which includes the 20-day early-show rule
         val visibleTxns = transactions.filter { t -> t.isVisibleInTransactions() }
@@ -864,7 +920,8 @@ class FirebaseRepository(
             ),
             isDeleted = isDeleted,
             savingsBalance = savingsBalance,
-            savingsEntries = sortedSavings
+            savingsEntries = sortedSavings,
+            snapshotVersion = snapshotVersion
         )
     }
 
@@ -885,6 +942,81 @@ class FirebaseRepository(
 
     private fun savingsCollection() = userRoot()
         .collection("savings")
+
+    private fun settlementHistoryCollection(transactionId: String) =
+        transactionsCollection().document(transactionId).collection("settlementHistory")
+
+    suspend fun recordSettlementHistory(
+        transactionId: String,
+        customerId: String,
+        type: String,
+        amount: Double,
+        previousPartialPaid: Double,
+        newPartialPaid: Double,
+        previousIsSettled: Boolean,
+        newIsSettled: Boolean,
+        date: String
+    ) {
+        val data = hashMapOf(
+            "transactionId" to transactionId,
+            "customerId" to customerId,
+            "type" to type,
+            "amount" to amount,
+            "previousPartialPaid" to previousPartialPaid,
+            "newPartialPaid" to newPartialPaid,
+            "previousIsSettled" to previousIsSettled,
+            "newIsSettled" to newIsSettled,
+            "date" to date,
+            "timestamp" to FieldValue.serverTimestamp()
+        )
+        settlementHistoryCollection(transactionId).add(data).await()
+    }
+
+    suspend fun getSettlementHistory(transactionId: String): List<SettlementHistoryEntry> {
+        val snap = settlementHistoryCollection(transactionId)
+            .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.ASCENDING)
+            .get()
+            .await()
+        return snap.documents.map { doc ->
+            SettlementHistoryEntry(
+                id = doc.id,
+                transactionId = doc.getString("transactionId") ?: "",
+                customerId = doc.getString("customerId") ?: "",
+                type = doc.getString("type") ?: "",
+                amount = doc.getDouble("amount") ?: 0.0,
+                previousPartialPaid = doc.getDouble("previousPartialPaid") ?: 0.0,
+                newPartialPaid = doc.getDouble("newPartialPaid") ?: 0.0,
+                previousIsSettled = doc.getBoolean("previousIsSettled") == true,
+                newIsSettled = doc.getBoolean("newIsSettled") == true,
+                date = doc.getString("date") ?: "",
+                timestamp = (doc.getTimestamp("timestamp")?.toDate()?.time ?: 0L)
+            )
+        }
+    }
+
+    /**
+     * Loads settlement history for every transaction in [transactions] in parallel,
+     * attaches the transaction name to each entry, and returns the combined list
+     * sorted newest-first (by timestamp).  Mirrors the web app's getAllSettlementHistory.
+     */
+    suspend fun getAllSettlementHistory(
+        transactions: List<Pair<String, String>>   // id to name
+    ): List<CustomerSettlementEntry> = coroutineScope {
+        val deferred = transactions.map { (id, name) ->
+            async {
+                try {
+                    getSettlementHistory(id).map { entry ->
+                        CustomerSettlementEntry(base = entry, transactionName = name)
+                    }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
+        }
+        deferred
+            .flatMap { it.await() }
+            .sortedByDescending { it.timestamp }
+    }
 
     private data class RunningAccountTotal(
         val id: String,
@@ -922,13 +1054,15 @@ class FirebaseRepository(
         referenceDate: LocalDate = LocalDate.now()
     ): Boolean {
         if (emiGroupId.isBlank()) return false
-        val installmentDate = runCatching { LocalDate.parse(transactionDate) }.getOrNull() ?: return false
-        if (!YearMonth.from(installmentDate).isAfter(YearMonth.from(referenceDate))) return false
-        // Show early if due date is within 20 days
-        if (dueDate.isNotBlank()) {
+        // Compute the effective transaction date the same way CustomerTransaction does:
+        // for EMIs with a dueDate, transactionDate = dueDate - 20 days.
+        val effectiveDate = if (dueDate.isNotBlank()) {
             val due = runCatching { LocalDate.parse(dueDate) }.getOrNull()
-            if (due != null && !due.isAfter(referenceDate.plusDays(20))) return false
-        }
-        return true
+            due?.minusDays(20)?.toString() ?: transactionDate
+        } else transactionDate
+        // It's a future EMI (hide it) only if its transaction date is strictly after today.
+        val installmentDate = runCatching { LocalDate.parse(effectiveDate) }.getOrNull()
+            ?: return false
+        return installmentDate.isAfter(referenceDate)
     }
 }

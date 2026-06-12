@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
-    <style name="Theme.Radafiq" parent="android:Theme.Material.Light.NoActionBar" />
+    <!--
+        Base theme — inherits NoActionBar so the system action bar is suppressed.
+        windowBackground is set to the app's dark base colour so the window
+        background visible during long/scrolling screenshots (and behind any
+        transparent Compose layers) matches the dark theme exactly.
+        RadafiqTheme's SideEffect overrides this at runtime for light mode.
+        Status bar and nav bar backgrounds are set transparent by
+        enableEdgeToEdge() in MainActivity; the Compose layer handles colour.
+    -->
+    <style name="Theme.Radafiq" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg_dark</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

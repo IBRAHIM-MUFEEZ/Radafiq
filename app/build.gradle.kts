@@ -36,6 +36,15 @@ android {
             keyAlias = System.getenv("KEY_ALIAS") ?: "radafiq-key"
             keyPassword = System.getenv("KEY_PASSWORD") ?: ""
         }
+        create("shared") {
+            // Reuse the same keystore across all machines so the same SHA-1
+            // works everywhere. Set KEYSTORE_PATH (and friends) on each
+            // developer machine to point to the shared keystore.
+            storeFile = file(System.getenv("KEYSTORE_PATH") ?: "radafiq-debug.jks")
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "radafiq123"
+            keyAlias = System.getenv("KEY_ALIAS") ?: "radafiq-key"
+            keyPassword = System.getenv("KEY_PASSWORD") ?: "radafiq123"
+        }
     }
 
     buildTypes {
@@ -50,6 +59,7 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("shared")
         }
     }
 
@@ -59,8 +69,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    kotlinOptions {
-        jvmTarget = "11"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+        }
     }
 
     buildFeatures {

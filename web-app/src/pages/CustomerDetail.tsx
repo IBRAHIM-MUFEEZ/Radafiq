@@ -1,10 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Check, PiggyBank, ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Check, PiggyBank, ChevronDown, ChevronUp, Download, History } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatMoney, formatDate, todayString, evaluateExpression } from '../utils/format';
-import { CustomerTransaction, isVisibleInTransactions, isEmi, isSplit, isEmiOverdue, daysUntilDue, AccountKind, AccountOption, SplitEntry, ACCOUNT_KIND_LABELS, getAccountOptions, ALL_ACCOUNTS } from '../types/models';
+import { CustomerTransaction, SettlementHistoryEntry, SETTLEMENT_TYPE_LABELS, isVisibleInTransactions, isEmi, isSplit, isEmiOverdue, daysUntilDue, AccountKind, AccountOption, SplitEntry, ACCOUNT_KIND_LABELS, getAccountOptions, ALL_ACCOUNTS } from '../types/models';
 import { generateAndDownloadStatement } from '../utils/statementGenerator';
+import { getAllSettlementHistory } from '../services/firebaseRepository';
 import AnimatedMoney from '../components/AnimatedMoney';
 
 type TxnFilter = 'ALL' | 'bank_account' | 'credit_card' | 'person';
@@ -36,6 +37,7 @@ function TransactionRow({
     ? 'var(--orange)'
     : 'var(--red)';
   const remaining = Math.max(0, txn.amount - txn.partialPaidAmount);
+  const showRemainingAsPrimary = !txn.isSettled && txn.partialPaidAmount > 0 && remaining !== txn.amount;
 
   // Due date label for EMI rows
   const dueDateLabel = (() => {
@@ -82,9 +84,11 @@ function TransactionRow({
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-        <div className="txn-amount" style={{ color: statusColor }}>{formatMoney(txn.amount)}</div>
-        {!txn.isSettled && txn.partialPaidAmount > 0 && (
-          <div className="text-xs text-muted">Due: {formatMoney(remaining)}</div>
+        <div className="txn-amount" style={{ color: statusColor }}>
+          {formatMoney(showRemainingAsPrimary ? remaining : txn.amount)}
+        </div>
+        {showRemainingAsPrimary && (
+          <div className="text-xs text-muted">Total: {formatMoney(txn.amount)}</div>
         )}
         <div style={{ display: 'flex', gap: 4 }}>
           <button
@@ -153,6 +157,7 @@ function SplitGroupRow({
   const allSettled = splits.every(t => t.isSettled);
   const anyPartial = splits.some(t => !t.isSettled && t.partialPaidAmount > 0);
   const groupStatusColor = allSettled ? 'var(--green)' : anyPartial ? 'var(--orange)' : 'var(--red)';
+  const showDueAsPrimary = !allSettled && totalDue > 0 && totalDue !== totalAmount;
   const name = splits[0]?.name ?? 'Split Transaction';
   const date = splits[0]?.transactionDate ?? '';
 
@@ -187,7 +192,12 @@ function SplitGroupRow({
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-          <div className="txn-amount" style={{ color: groupStatusColor }}>{formatMoney(totalAmount)}</div>
+          <div className="txn-amount" style={{ color: groupStatusColor }}>
+            {formatMoney(showDueAsPrimary ? totalDue : totalAmount)}
+          </div>
+          {showDueAsPrimary && (
+            <div className="text-xs text-muted">Total: {formatMoney(totalAmount)}</div>
+          )}
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             {/* Mark All Paid shortcut on group header */}
             {!allSettled && (
@@ -229,6 +239,7 @@ function SplitGroupRow({
           {splits.map(split => {
             const splitStatusColor = split.isSettled ? 'var(--green)' : split.partialPaidAmount > 0 ? 'var(--orange)' : 'var(--red)';
             const remaining = Math.max(0, split.amount - split.partialPaidAmount);
+            const showSplitDueAsPrimary = !split.isSettled && split.partialPaidAmount > 0 && remaining !== split.amount;
             const accentColor = split.accountKind === 'credit_card' ? 'var(--warning)' : split.accountKind === 'person' ? 'var(--primary)' : 'var(--secondary)';
             const kindLabel = split.accountKind === 'credit_card' ? 'Credit Card' : split.accountKind === 'person' ? 'Person' : 'Bank Account';
             return (
@@ -256,8 +267,13 @@ function SplitGroupRow({
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
                   <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: splitStatusColor }}>
-                    {formatMoney(split.amount)}
+                    {formatMoney(showSplitDueAsPrimary ? remaining : split.amount)}
                   </div>
+                  {showSplitDueAsPrimary && (
+                    <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
+                      Total: {formatMoney(split.amount)}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     {/* Mark as Paid / Unpaid button — explicit label */}
                     <button
@@ -345,7 +361,7 @@ export default function CustomerDetail() {
   const { customerId } = useParams<{ customerId: string }>();
   const navigate = useNavigate();
   const {
-    customers, settings, profile,
+    user, customers, settings, profile,
     addTransaction, addEmiTransactions, addSplitTransactions, convertEmiInstallmentToSplit,
     updateTransaction, deleteTransaction, addPartialPayment,
     toggleTransactionSettled, deleteCustomer, updateCustomerDueAmount,
@@ -361,6 +377,7 @@ export default function CustomerDetail() {
   const [partialAmount, setPartialAmount] = useState('');
   const [showDueEditor, setShowDueEditor] = useState(false);
   const [dueAmount, setDueAmount] = useState('');
+  const [showPaidBreakdown, setShowPaidBreakdown] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteCustomer, setConfirmDeleteCustomer] = useState(false);
   // Track which split groups are expanded — keyed by groupId so state
@@ -375,6 +392,11 @@ export default function CustomerDetail() {
       return next;
     });
   };
+
+  // Consolidated settlement history modal state
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [allHistoryLoading, setAllHistoryLoading] = useState(false);
+  const [allHistoryEntries, setAllHistoryEntries] = useState<(SettlementHistoryEntry & { transactionName: string })[]>([]);
 
   // Settle confirmation — holds the pending action until user confirms
   const [settleConfirm, setSettleConfirm] = useState<{
@@ -660,6 +682,24 @@ export default function CustomerDetail() {
     return Array.from(map.values()).sort((a, b) => b.totalDue - a.totalDue || b.totalUsed - a.totalUsed);
   }, [customer.transactions]);
 
+  const liveSummary = useMemo(() => {
+    const today = new Date();
+    const visible = customer.transactions.filter(t => isVisibleInTransactions(t, today));
+    const totalAmount = visible.reduce((sum, t) => sum + t.amount, 0);
+    const settledTransactionAmount = visible.reduce((sum, t) => sum + (t.isSettled ? t.amount : 0), 0);
+    const partialPaidAmount = visible.reduce((sum, t) => sum + (!t.isSettled ? t.partialPaidAmount : 0), 0);
+    const manualPaidAmount = customer.manualPaidAmount;
+    const creditDueAmount = manualPaidAmount + settledTransactionAmount + partialPaidAmount;
+    return {
+      totalAmount,
+      creditDueAmount,
+      manualPaidAmount,
+      settledTransactionAmount,
+      partialPaidAmount,
+      balance: Math.max(0, totalAmount - creditDueAmount),
+    };
+  }, [customer.transactions, customer.manualPaidAmount]);
+
   // ── Account-level payment state ─────────────────────────────────────────────
   const [accountPayTarget, setAccountPayTarget] = useState<{
     accountId: string;
@@ -704,6 +744,24 @@ export default function CustomerDetail() {
         await addPartialPayment(txn.id, String(remaining));
         remaining = 0;
       }
+    }
+  };
+
+  const loadAllHistory = async () => {
+    if (!user || !customer) return;
+    setAllHistoryLoading(true);
+    try {
+      const entries = await getAllSettlementHistory(
+        user.uid,
+        customer.transactions.map(t => ({ id: t.id, name: t.name }))
+      );
+      setAllHistoryEntries(entries);
+      setShowAllHistory(true);
+    } catch (e) {
+      console.error('Failed to load settlement history:', e);
+      setAllHistoryEntries([]);
+    } finally {
+      setAllHistoryLoading(false);
     }
   };
 
@@ -757,28 +815,31 @@ export default function CustomerDetail() {
         <div className="two-col" style={{ marginBottom: '0.75rem' }}>
           <div className="metric-pill">
             <span className="label">Total Used</span>
-            <span className="value text-primary"><AnimatedMoney value={customer.totalAmount} /></span>
+            <span className="value text-primary"><AnimatedMoney value={liveSummary.totalAmount} /></span>
           </div>
-          <div className="metric-pill">
+          <div className="metric-pill" style={{ cursor: 'pointer' }} onClick={() => setShowPaidBreakdown(true)}>
             <span className="label">Customer Paid</span>
-            <span className="value" style={{ color: 'var(--secondary)' }}><AnimatedMoney value={customer.creditDueAmount} /></span>
+            <span className="value" style={{ color: 'var(--secondary)' }}><AnimatedMoney value={liveSummary.creditDueAmount} /></span>
           </div>
         </div>
 
         <div className="accent-row">
           <span className="accent-label">Balance Remaining</span>
-          <span className="accent-value" style={{ color: customer.balance > 0 ? 'var(--warning)' : 'var(--primary)' }}>
-            <AnimatedMoney value={customer.balance} />
+          <span className="accent-value" style={{ color: liveSummary.balance > 0 ? 'var(--warning)' : 'var(--primary)' }}>
+            <AnimatedMoney value={liveSummary.balance} />
           </span>
         </div>
 
         <p className="text-muted text-xs" style={{ marginTop: 8 }}>
-          Manual paid {formatMoney(customer.manualPaidAmount)} • Settled {formatMoney(customer.settledTransactionAmount)} • Partial {formatMoney(customer.partialPaidAmount)}
+          Manual paid {formatMoney(liveSummary.manualPaidAmount)} • Settled {formatMoney(liveSummary.settledTransactionAmount)} • Partial {formatMoney(liveSummary.partialPaidAmount)}
         </p>
 
         <div style={{ display: 'flex', gap: 8, marginTop: '1rem' }}>
-          <button className="btn btn-sm btn-outline" onClick={() => { setDueAmount(String(customer.creditDueAmount)); setShowDueEditor(true); }}>
+          <button className="btn btn-sm btn-outline" onClick={() => { setDueAmount(String(liveSummary.manualPaidAmount)); setShowDueEditor(true); }}>
             Adjust Paid
+          </button>
+          <button className="btn btn-sm btn-outline" onClick={loadAllHistory}>
+            <History size={14} /> History
           </button>
         </div>
       </div>
@@ -797,6 +858,7 @@ export default function CustomerDetail() {
             {accountBreakdowns.map((b, i) => {
               const accent = b.accountKind === 'credit_card' ? 'var(--warning)' : b.accountKind === 'person' ? 'var(--primary)' : 'var(--secondary)';
               const kindLabel = b.accountKind === 'credit_card' ? 'Credit Card' : b.accountKind === 'person' ? 'Person' : 'Bank Account';
+              const showDueAsPrimary = b.totalDue > 0 && b.totalDue !== b.totalUsed;
               return (
                 <div key={i} style={{
                   display: 'flex',
@@ -819,11 +881,15 @@ export default function CustomerDetail() {
                       </div>
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: accent }}>
-                        <AnimatedMoney value={b.totalUsed} />
+                      <div style={{ fontSize: showDueAsPrimary ? '1rem' : '0.8125rem', fontWeight: 700, color: showDueAsPrimary ? 'var(--warning)' : accent }}>
+                        <AnimatedMoney value={showDueAsPrimary ? b.totalDue : b.totalUsed} />
                       </div>
-                      <div style={{ fontSize: '0.6875rem', color: b.totalDue > 0 ? 'var(--warning)' : 'var(--primary)' }}>
-                        {b.totalDue > 0 ? <>Due <AnimatedMoney value={b.totalDue} /></> : '✓ Settled'}
+                      <div style={{ fontSize: '0.6875rem', color: b.totalDue > 0 ? (showDueAsPrimary ? 'var(--text-muted)' : 'var(--warning)') : 'var(--primary)' }}>
+                        {b.totalDue > 0
+                          ? showDueAsPrimary
+                            ? <>Total <AnimatedMoney value={b.totalUsed} /></>
+                            : <>Due <AnimatedMoney value={b.totalDue} /></>
+                          : '✓ Settled'}
                       </div>
                     </div>
                   </div>
@@ -1439,6 +1505,172 @@ export default function CustomerDetail() {
               >
                 Delete
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Settlement History Modal */}
+      {showAllHistory && (
+        <div className="modal-overlay" onClick={() => setShowAllHistory(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <h3 className="modal-title">Settlement History</h3>
+            <div className="modal-body" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+              {allHistoryLoading ? (
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', paddingTop: 8 }}>Loading...</p>
+              ) : allHistoryEntries.length === 0 ? (
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', paddingTop: 8 }}>No settlement history recorded yet.</p>
+              ) : (
+                allHistoryEntries.map((entry, i) => (
+                  <div key={entry.id}>
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '8px 0',
+                    }}>
+                      <div>
+                        <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>
+                          {entry.transactionName}
+                        </div>
+                        <div style={{
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          marginTop: 2,
+                          color: entry.type === 'settled' ? 'var(--green)' : entry.type === 'partial' ? 'var(--orange)' : 'var(--red)',
+                        }}>
+                          {SETTLEMENT_TYPE_LABELS[entry.type] ?? entry.type}
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                          {entry.date}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 700 }}>
+                        {formatMoney(entry.amount)}
+                      </div>
+                    </div>
+                    {i < allHistoryEntries.length - 1 && (
+                      <div style={{ height: 1, background: 'var(--outline)', opacity: 0.2 }} />
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-primary" onClick={() => setShowAllHistory(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Paid breakdown modal */}
+      {showPaidBreakdown && (
+        <div className="modal-overlay" onClick={() => setShowPaidBreakdown(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
+            <h3 className="modal-title">Payment Breakdown</h3>
+            {customer.manualPaidAmount > 0 && (
+              <p className="modal-subtitle">
+                Includes manual adjustment: <strong>{formatMoney(customer.manualPaidAmount)}</strong>
+              </p>
+            )}
+            {(() => {
+              const today = new Date();
+              const entries = customer.transactions
+                .filter(t => isVisibleInTransactions(t, today))
+                .filter(t => t.isSettled || t.partialPaidAmount > 0)
+                .map(t => ({
+                  transactionName: t.name,
+                  accountName: t.accountName,
+                  accountKind: t.accountKind,
+                  paidAmount: t.isSettled ? t.amount : t.partialPaidAmount,
+                  totalAmount: t.amount,
+                  isFullyPaid: t.isSettled,
+                  date: t.isSettled && t.settledDate ? t.settledDate : t.transactionDate,
+                }))
+                .sort((a, b) => b.date.localeCompare(a.date));
+              const totalPaidFromTxns = entries.reduce((s, e) => s + e.paidAmount, 0);
+              const groupedByAccount: Record<string, typeof entries> = {};
+              entries.forEach(e => {
+                if (!groupedByAccount[e.accountName]) groupedByAccount[e.accountName] = [];
+                groupedByAccount[e.accountName].push(e);
+              });
+              return (
+                <div className="modal-body" style={{ maxHeight: '50vh', overflowY: 'auto' }}>
+                  {entries.length > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 12, fontSize: '0.8125rem' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Paid via transactions</span>
+                      <strong style={{ color: 'var(--secondary)' }}>{formatMoney(totalPaidFromTxns)}</strong>
+                    </div>
+                  )}
+                  {entries.length === 0 && customer.manualPaidAmount <= 0 && (
+                    <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', paddingTop: 8 }}>No payment records found.</p>
+                  )}
+                  {entries.length > 0 && (
+                    <>
+                      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4 }}>Daily Total</p>
+                      <div style={{ background: 'color-mix(in srgb, var(--secondary) 15%, transparent)', borderRadius: 10, padding: 10, marginBottom: 12 }}>
+                        {(() => {
+                          const byDateOverall: Record<string, number> = {};
+                          entries.forEach(e => {
+                            byDateOverall[e.date] = (byDateOverall[e.date] || 0) + e.paidAmount;
+                          });
+                          return Object.entries(byDateOverall)
+                            .sort(([a], [b]) => b.localeCompare(a))
+                            .map(([date, total]) => (
+                              <div key={date} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0' }}>
+                                <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-muted)' }}>{date}</span>
+                                <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--secondary)' }}>{formatMoney(total)}</span>
+                              </div>
+                            ));
+                        })()}
+                      </div>
+                    </>
+                  )}
+                  {Object.entries(groupedByAccount).map(([accountName, acctEntries]) => {
+                    const accent = acctEntries[0].accountKind === 'credit_card' ? 'var(--warning)'
+                      : acctEntries[0].accountKind === 'person' ? 'var(--primary)' : 'var(--secondary)';
+                    const groupedByDate: Record<string, typeof acctEntries> = {};
+                    acctEntries.forEach(e => {
+                      if (!groupedByDate[e.date]) groupedByDate[e.date] = [];
+                      groupedByDate[e.date].push(e);
+                    });
+                    return (
+                      <div key={accountName} style={{ background: `color-mix(in srgb, ${accent} 8%, transparent)`, borderRadius: 10, padding: 10, marginBottom: 6 }}>
+                        <p style={{ fontSize: '0.75rem', fontWeight: 700, color: accent, marginBottom: 8 }}>{accountName}</p>
+                        {Object.entries(groupedByDate).map(([date, dateEntries]) => {
+                          const dateTotal = dateEntries.reduce((s, e) => s + e.paidAmount, 0);
+                          return (
+                            <div key={date} style={{ marginBottom: 6 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0' }}>
+                                <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)' }}>{date}</span>
+                                <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--secondary)' }}>{formatMoney(dateTotal)}</span>
+                              </div>
+                              {dateEntries.map((entry, i) => (
+                                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0 3px 8px' }}>
+                                  <div>
+                                    <p style={{ fontSize: '0.8125rem', fontWeight: 600, margin: 0 }}>{entry.transactionName}</p>
+                                  </div>
+                                  <div style={{ textAlign: 'right' }}>
+                                    <p style={{ fontSize: '0.8125rem', fontWeight: 700, margin: 0, color: entry.isFullyPaid ? 'var(--secondary)' : 'var(--primary)' }}>
+                                      {formatMoney(entry.paidAmount)}
+                                    </p>
+                                    <p style={{ fontSize: '0.7rem', margin: 0, color: entry.isFullyPaid ? 'var(--secondary)' : 'var(--warning)' }}>
+                                      {entry.isFullyPaid ? '✓ Fully Paid' : `Partial — Due ${formatMoney(entry.totalAmount - entry.paidAmount)}`}
+                                    </p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+            <div className="modal-actions">
+              <button className="btn btn-primary" onClick={() => setShowPaidBreakdown(false)}>Close</button>
             </div>
           </div>
         </div>

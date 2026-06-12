@@ -74,7 +74,7 @@ fun AnalyticsScreen(
         cards.filter { it.accountKind == selectedAccountKind }
     }
 
-    val sortedCustomers = remember(customers) { customers.sortedBy { it.name.lowercase() } }
+    val sortedCustomers = remember(customers.sumOf { it.snapshotVersion }) { customers.sortedBy { it.name.lowercase() } }
     var selectedCustomerId by rememberSaveable { mutableStateOf("") }
     var selectedCustomerMetricName by rememberSaveable { mutableStateOf(AnalyticsMetric.USAGE.name) }
     val selectedCustomer = sortedCustomers.firstOrNull { it.id == selectedCustomerId }
@@ -84,6 +84,7 @@ fun AnalyticsScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
+            .radafiqScrollBackground()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {

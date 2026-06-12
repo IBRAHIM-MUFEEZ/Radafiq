@@ -65,7 +65,6 @@ import androidx.core.view.WindowCompat
 import com.radafiq.data.settings.AppThemeMode
 
 private val GlassDark = Color(0xFF0A0A1A)
-private val GlassDarkDeep = Color(0xFF070714)
 private val GlassDarkSoft = Color(0xFF12122A)
 private val GlassDarkRaised = Color(0xFF1E1E40)
 
@@ -98,7 +97,7 @@ private val RadafiqLightColors: ColorScheme = lightColorScheme(
     onTertiary = GlassWhite,
     error = Color(0xFFDC2626),
     onError = GlassWhite,
-    background = Color(0xFFF0F0F8),
+    background = Color(0xFFE6E0F0),
     onBackground = Color(0xFF1A1A3E),
     surface = GlassWhite.copy(alpha = 0.70f),
     onSurface = Color(0xFF1A1A3E),
@@ -179,13 +178,16 @@ fun RadafiqTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as? Activity)?.window ?: return@SideEffect
-            val statusBarColor = if (useDarkTheme) {
-                GlassDarkDeep
-            } else {
-                Color(0xFFE8E4F4)
-            }
-            window.statusBarColor = statusBarColor.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !useDarkTheme
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = !useDarkTheme
+            controller.isAppearanceLightNavigationBars = !useDarkTheme
+
+            // Set the window background to the solid base colour so Android's
+            // long/scrolling screenshot compositor fills every area — including
+            // scroll content below the visible viewport — with the correct
+            // theme colour instead of the system default white/gray.
+            val windowBg = if (useDarkTheme) 0xFF0A0A1A.toInt() else 0xFFE6E0F0.toInt()
+            window.decorView.setBackgroundColor(windowBg)
         }
     }
 
@@ -199,9 +201,35 @@ fun RadafiqTheme(
     }
 }
 
+/**
+ * Solid base colour that fills any area not covered by the gradient — used as
+ * the window/screen background so long/scrolling screenshots stay on-theme.
+ */
+@Composable
+fun radafiqSolidBg(): Color {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+    return if (useDarkTheme) Color(0xFF0A0A1A) else Color(0xFFE6E0F0)
+}
+
+/**
+ * Modifier that paints the correct solid background colour behind scrollable
+ * content.  Apply this to LazyColumn / Column so every pixel rendered during
+ * a long/scrolling screenshot uses the right theme colour even beyond the
+ * visible frame where [RadafiqBackground]'s gradient Box ends.
+ */
+@Composable
+fun Modifier.radafiqScrollBackground(): Modifier {
+    val bg = radafiqSolidBg()
+    return this.background(bg)
+}
+
 @Composable
 fun RadafiqBackground(content: @Composable () -> Unit) {
     val useDarkTheme = LocalRadafiqDarkTheme.current
+    // Solid base colour — fills the window behind the gradient so any area
+    // outside the rendered gradient rectangle (e.g. during long screenshots
+    // or on foldable / large-screen layouts) stays on-theme.
+    val solidBase = if (useDarkTheme) Color(0xFF0A0A1A) else Color(0xFFE6E0F0)
     val backgroundBrush = if (useDarkTheme) {
         Brush.verticalGradient(
             colors = listOf(
@@ -214,10 +242,10 @@ fun RadafiqBackground(content: @Composable () -> Unit) {
     } else {
         Brush.verticalGradient(
             colors = listOf(
-                Color(0xFFF0F0F8),
-                Color(0xFFE8E4F4),
-                Color(0xFFE0ECF8),
-                Color(0xFFF0F0F8)
+                Color(0xFFE6E0F0),
+                Color(0xFFE0DAF2),
+                Color(0xFFDCE8F5),
+                Color(0xFFE6E0F0)
             )
         )
     }
@@ -225,12 +253,20 @@ fun RadafiqBackground(content: @Composable () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // 1. Solid base first — covers the entire composable including any
+            //    scroll overflow captured in a long screenshot.
+            .background(solidBase)
+            // 2. Gradient on top for the visible decorative effect.
             .background(backgroundBrush)
     ) {
         GlassBackdrop()
+        // Use solidBase instead of Color.Transparent so every frame rendered
+        // during a long/scrolling screenshot has the correct opaque background.
+        // Semi-transparent card overlays (FlowCard, TransactionRow, etc.) will
+        // composite correctly against this colour instead of system-default white.
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = Color.Transparent,
+            color = solidBase,
             content = content
         )
     }
@@ -373,7 +409,7 @@ fun FlowCard(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (useDarkTheme) {
-                Color(0x16FFFFFF)
+                GlassDarkSoft
             } else {
                 GlassWhite.copy(alpha = 0.75f)
             },
@@ -573,7 +609,7 @@ fun HeroPanel(
 @Composable
 private fun GlassCardModifier(useDarkTheme: Boolean): Modifier = Modifier
     .clip(RoundedCornerShape(18.dp))
-    .background(if (useDarkTheme) Color(0x16FFFFFF) else GlassWhite.copy(alpha = 0.75f))
+    .background(if (useDarkTheme) GlassDarkSoft else GlassWhite.copy(alpha = 0.75f))
     .border(
         1.dp,
         if (useDarkTheme) GlassOutline.copy(alpha = 0.55f) else Color(0xFFD0D0E8).copy(alpha = 0.58f),
@@ -695,7 +731,7 @@ fun StatusBadge(
         overflow = TextOverflow.Ellipsis,
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(if (useDarkTheme) Color(0x16FFFFFF) else color.copy(alpha = 0.10f))
+            .background(if (useDarkTheme) GlassDarkSoft else color.copy(alpha = 0.10f))
             .border(1.dp, color.copy(alpha = if (useDarkTheme) 0.35f else 0.20f), RoundedCornerShape(16.dp))
             .padding(horizontal = 12.dp, vertical = 8.dp)
     )
@@ -713,7 +749,7 @@ fun AccentValueRow(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(if (useDarkTheme) Color(0x16FFFFFF) else GlassWhite.copy(alpha = 0.75f))
+            .background(if (useDarkTheme) GlassDarkSoft else GlassWhite.copy(alpha = 0.75f))
             .border(1.dp, if (useDarkTheme) GlassOutline.copy(alpha = 0.55f) else Color(0xFFD0D0E8).copy(alpha = 0.58f), RoundedCornerShape(18.dp))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -770,7 +806,7 @@ fun AccentValueRow(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(if (useDarkTheme) Color(0x16FFFFFF) else GlassWhite.copy(alpha = 0.75f))
+            .background(if (useDarkTheme) GlassDarkSoft else GlassWhite.copy(alpha = 0.75f))
             .border(1.dp, if (useDarkTheme) GlassOutline.copy(alpha = 0.55f) else Color(0xFFD0D0E8).copy(alpha = 0.58f), RoundedCornerShape(18.dp))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -816,7 +852,7 @@ fun EmptyState(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .clip(RoundedCornerShape(28.dp))
-                .background(if (useDarkTheme) Color(0x16FFFFFF) else GlassWhite.copy(alpha = 0.75f))
+                .background(if (useDarkTheme) GlassDarkSoft else GlassWhite.copy(alpha = 0.75f))
                 .border(1.dp, if (useDarkTheme) GlassOutline.copy(alpha = 0.55f) else Color(0xFFD0D0E8).copy(alpha = 0.58f), RoundedCornerShape(28.dp))
                 .padding(24.dp)
         ) {

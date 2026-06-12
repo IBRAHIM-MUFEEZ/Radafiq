@@ -38,7 +38,15 @@ class UserProfileRepository(
         val userId = LocalIdentityRepository.userId()
 
         _state.value = UserProfileState(isLoading = true)
-        registration = profileDocument(userId).addSnapshotListener { snapshot, _ ->
+        registration = profileDocument(userId).addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                android.util.Log.w("UserProfile", "Profile listener error — proceeding with default profile", error)
+                _state.value = UserProfileState(
+                    isLoading = false,
+                    profile = UserProfile(uid = userId)
+                )
+                return@addSnapshotListener
+            }
             val profile = if (snapshot == null || !snapshot.exists()) {
                 UserProfile(uid = userId)
             } else {

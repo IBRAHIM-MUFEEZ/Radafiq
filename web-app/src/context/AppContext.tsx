@@ -4,6 +4,7 @@ import { auth, googleProvider } from '../firebase';
 import {
   CardSummary,
   CustomerSummary,
+  SettlementHistoryEntry,
   UserProfile,
   AppSettings,
   AppSecurityState,
@@ -216,6 +217,11 @@ interface AppContextValue {
   addSavingsWithdrawal: (customerId: string, customerName: string, amount: string, note: string) => Promise<void>;
   deleteSavingsEntry: (entryId: string) => Promise<void>;
 
+  // Settlement History
+  settlementHistory: SettlementHistoryEntry[];
+  settlementHistoryLoading: boolean;
+  loadSettlementHistory: (transactionId: string) => Promise<void>;
+
   // Backup / Restore
   exportBackupToFile: () => Promise<void>;
   importBackupFromFile: (file: File) => Promise<void>;
@@ -252,6 +258,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [backupStatusMessage, setBackupStatusMessage] = useState('');
   const [backupInProgress, setBackupInProgress] = useState(false);
   const [syncStatus, setSyncStatus] = useState<{ state: 'IDLE' | 'SYNCING' | 'SUCCESS' | 'ERROR'; message: string }>({ state: 'IDLE', message: '' });
+  const [settlementHistory, setSettlementHistory] = useState<SettlementHistoryEntry[]>([]);
+  const [settlementHistoryLoading, setSettlementHistoryLoading] = useState(false);
 
   const unsubscribeDataRef = useRef<(() => void)[]>([]);
   const unsubscribeProfileRef = useRef<(() => void) | null>(null);
@@ -278,10 +286,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       if (firebaseUser) {
         clearSecurityStorageForOtherUser(firebaseUser.uid);
+
+        // Sync security between cloud and localStorage
+        try {
+          const cloudData = await repo.loadSecurityFromCloud(firebaseUser.uid);
+          const localData = loadSecurityStorage();
+          if (cloudData && cloudData.passcodeHash) {
+            // Cloud has passcode — sync to local if local is empty or different user
+            if (!localData.passcodeHash || localData.ownerUid !== firebaseUser.uid) {
+              saveSecurityStorage({ ...cloudData, ownerUid: firebaseUser.uid });
+            }
+          } else if (localData.passcodeHash && localData.ownerUid === firebaseUser.uid) {
+            // Local has passcode but cloud doesn't — migrate to cloud
+            await repo.saveSecurityToCloud(firebaseUser.uid, {
+              passcodeHash: localData.passcodeHash,
+              passcodeSalt: localData.passcodeSalt,
+              lockEnabled: localData.lockEnabled,
+              recoveryQuestion: localData.recoveryQuestion,
+              recoveryAnswerHash: localData.recoveryAnswerHash,
+            });
+          }
+        } catch (e) {
+          console.error('Security cloud sync error:', e);
+        }
+
         refreshSecurity();
         // Refresh passkey state for this user
         setHasPasskey(!!getPasskeyCredentialId(firebaseUser.uid));
-        repo.clearSecurityFromCloud(firebaseUser.uid).catch(console.error);
 
         // Start profile listener
         setProfileLoading(true);
@@ -376,6 +407,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     saveSecurityStorage(secData);
     refreshSecurity();
+    if (user?.uid) {
+      repo.saveSecurityToCloud(user.uid, {
+        passcodeHash: secData.passcodeHash,
+        passcodeSalt: secData.passcodeSalt,
+        lockEnabled: secData.lockEnabled,
+        recoveryQuestion: secData.recoveryQuestion,
+        recoveryAnswerHash: secData.recoveryAnswerHash,
+      }).catch(console.error);
+    }
   }, [refreshSecurity, user]);
 
   const updatePasscode = useCallback(async (current: string, newPasscode: string, recoveryQuestion: string, recoveryAnswer: string): Promise<boolean> => {
@@ -396,18 +436,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     saveSecurityStorage(secData);
     refreshSecurity();
+    if (user?.uid) {
+      repo.saveSecurityToCloud(user.uid, {
+        passcodeHash: secData.passcodeHash,
+        passcodeSalt: secData.passcodeSalt,
+        lockEnabled: secData.lockEnabled,
+        recoveryQuestion: secData.recoveryQuestion,
+        recoveryAnswerHash: secData.recoveryAnswerHash,
+      }).catch(console.error);
+    }
     return true;
   }, [refreshSecurity, user]);
 
   const clearPasscode = useCallback(() => {
     clearSecurityStorage();
     refreshSecurity();
-  }, [refreshSecurity]);
+    if (user?.uid) {
+      repo.clearSecurityFromCloud(user.uid).catch(console.error);
+    }
+  }, [refreshSecurity, user]);
 
   const setLockEnabled = useCallback((enabled: boolean) => {
     saveSecurityStorage({ lockEnabled: enabled });
     refreshSecurity();
-  }, [refreshSecurity]);
+    if (user?.uid) {
+      const s = loadSecurityStorage();
+      repo.saveSecurityToCloud(user.uid, {
+        passcodeHash: s.passcodeHash,
+        passcodeSalt: s.passcodeSalt,
+        lockEnabled: enabled,
+        recoveryQuestion: s.recoveryQuestion,
+        recoveryAnswerHash: s.recoveryAnswerHash,
+      }).catch(console.error);
+    }
+  }, [refreshSecurity, user]);
 
   const verifyPasscode = useCallback(async (passcode: string): Promise<boolean> => {
     if (isPasscodeLockedOut()) return false;
@@ -430,8 +492,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const newHash = await hashPasscode(newPasscode.trim(), s.passcodeSalt);
     saveSecurityStorage({ passcodeHash: newHash, lockEnabled: true, failedAttempts: 0, lockoutUntil: 0 });
     setSecurityState(prev => ({ ...prev, isUnlocked: true }));
+    if (user?.uid) {
+      const full = loadSecurityStorage();
+      repo.saveSecurityToCloud(user.uid, {
+        passcodeHash: full.passcodeHash,
+        passcodeSalt: full.passcodeSalt,
+        lockEnabled: full.lockEnabled,
+        recoveryQuestion: full.recoveryQuestion,
+        recoveryAnswerHash: full.recoveryAnswerHash,
+      }).catch(console.error);
+    }
     return true;
-  }, []);
+  }, [user]);
 
   const unlock = useCallback(() => {
     setSecurityState(prev => ({ ...prev, isUnlocked: true }));
@@ -787,6 +859,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await repo.toggleTransactionSettled(user.uid, transactionId, isSettled, isSettled ? todayString() : '');
   }, [user]);
 
+  const loadSettlementHistory = useCallback(async (transactionId: string) => {
+    if (!user) return;
+    setSettlementHistoryLoading(true);
+    try {
+      const history = await repo.getSettlementHistory(user.uid, transactionId);
+      setSettlementHistory(history);
+    } catch (e) {
+      console.error('Failed to load settlement history:', e);
+      setSettlementHistory([]);
+    } finally {
+      setSettlementHistoryLoading(false);
+    }
+  }, [user]);
+
   // ── Account operations ────────────────────────────────────────────────────
 
   const updateCreditCardDue = useCallback(async (params: {
@@ -987,6 +1073,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addSavingsDeposit,
     addSavingsWithdrawal,
     deleteSavingsEntry,
+    settlementHistory,
+    settlementHistoryLoading,
+    loadSettlementHistory,
     exportBackupToFile,
     importBackupFromFile,
     backupStatusMessage,

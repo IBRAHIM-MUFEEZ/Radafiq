@@ -5,9 +5,9 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -76,25 +76,12 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
+        enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
 
         setContent {
             AppRoot()
         }
-    }
-
-    // FIX-6: Re-apply FLAG_SECURE on every resume so it survives theme changes and
-    // activity recreation on some OEM ROMs.
-    override fun onResume() {
-        super.onResume()
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
     }
 
     @Composable
@@ -107,7 +94,7 @@ class MainActivity : FragmentActivity() {
         val biometricAuthManager = remember { BiometricAuthManager() }
         val navController = rememberNavController()
 
-        // Wire auto-backup — runs 10s after any data change if user is signed in to Google
+        // Wire auto-backup â€” runs 10s after any data change if user is signed in to Google
         LaunchedEffect(mainViewModel) {
             mainViewModel.initAutoBackup(
                 context = applicationContext,
@@ -126,6 +113,13 @@ class MainActivity : FragmentActivity() {
         var backupStatusMessage by rememberSaveable { mutableStateOf("") }
         var backupOperationInProgress by rememberSaveable { mutableStateOf(false) }
         var lockErrorMessage by rememberSaveable { mutableStateOf("") }
+        // Tracks whether the user has unlocked in this session — survives activity
+        // recreation (e.g. during long-screenshot save) so the lock screen isn't
+        // shown again until the app is intentionally background-locked.
+        var sessionUnlocked by rememberSaveable { mutableStateOf(false) }
+        LaunchedEffect(securityState.isUnlocked) {
+            if (securityState.isUnlocked) sessionUnlocked = true
+        }
 
         // Google Drive backup state
         var driveStatusMessage by rememberSaveable { mutableStateOf("") }
@@ -135,11 +129,12 @@ class MainActivity : FragmentActivity() {
         val driveBackupRepository = remember { DriveBackupRepository() }
 
         // Google Sign-In for profile setup
-        var profileGoogleSignInInProgress by rememberSaveable { mutableStateOf(false) }
+        var profileGoogleSignInInProgress by remember { mutableStateOf(false) }
         var pendingProfileCallback by remember { mutableStateOf<((String, String, String, String) -> Unit)?>(null) }
         // Shows a "Restoring from Drive..." overlay after sign-in
         var loginRestoreInProgress by rememberSaveable { mutableStateOf(false) }
-
+        // Error message shown on the profile setup screen (e.g. sign-in failed)
+        var profileSignInErrorMessage by remember { mutableStateOf("") }
         val profileGoogleSignInLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.StartActivityForResult()
         ) { result ->
@@ -151,34 +146,39 @@ class MainActivity : FragmentActivity() {
                 val photo = account.photoUrl?.toString().orEmpty()
                 // BUG-04: Validate that email is non-null/non-blank before proceeding
                 if (email.isBlank()) {
-                    android.util.Log.w("MainActivity", "Google Sign-In returned account with blank email — aborting")
+                    android.util.Log.w("MainActivity", "Google Sign-In returned account with blank email â€” aborting")
                     profileGoogleSignInInProgress = false
+                    profileSignInErrorMessage = "Sign-in returned no email address. Please try again."
                     return@rememberLauncherForActivityResult
                 }
-                if (email.isNotBlank()) {
-                    loginRestoreInProgress = true
-                    profileGoogleSignInInProgress = false
-                    coroutineScope.launch {
-                        // 1. Sign into Firebase Auth — get real UID
-                        val firebaseUid = GoogleSignInHelper.signInToFirebase(account)
-                        if (firebaseUid != null) {
-                            LocalIdentityRepository.setIdentityFromFirebaseUid(firebaseUid, applicationContext)
-                        } else {
-                            // Fallback: Firebase Auth unavailable, use email-based ID
-                            LocalIdentityRepository.setIdentityFromEmail(email, applicationContext)
-                        }
-
-                        // 2. Reinitialize data layer with new identity
-                        settingsRepository.reloadForCurrentUser()
-                        mainViewModel.reinitialize()
-                        profileRepository.observeCurrentUserProfile()
-
-                        // 3. Save profile (callback runs after identity is set)
-                        pendingProfileCallback?.invoke(name, "", email, photo)
+                profileSignInErrorMessage = ""
+                loginRestoreInProgress = true
+                profileGoogleSignInInProgress = false
+                coroutineScope.launch {
+                    // 1. Sign into Firebase Auth â€” get real UID
+                    val firebaseUid = GoogleSignInHelper.signInToFirebase(account)
+                    if (!firebaseUid.isNullOrBlank()) {
+                        LocalIdentityRepository.setIdentityFromFirebaseUid(firebaseUid, applicationContext)
+                    } else {
+                        profileSignInErrorMessage =
+                            "Google sign-in could not connect to Firebase. Please install a build signed with a registered SHA-1 certificate."
                         pendingProfileCallback = null
+                        loginRestoreInProgress = false
+                        return@launch
+                    }
 
-                        // 4. Restore from Drive
-                        runCatching {
+                    // 2. Reinitialize data layer with new identity
+                    settingsRepository.reloadForCurrentUser()
+                    mainViewModel.reinitialize()
+                    profileRepository.observeCurrentUserProfile()
+
+                    // 3. Save profile (callback runs after identity is set)
+                    pendingProfileCallback?.invoke(name, "", email, photo)
+                    pendingProfileCallback = null
+
+                    // 4. Restore from Drive
+                    val restoreResult = runCatching {
+                        withTimeout(60_000L) {
                             val token = GoogleSignInHelper.fetchAccessToken(applicationContext, account)
                             val json = withContext(Dispatchers.IO) {
                                 driveBackupRepository.downloadLatestBackup(token).getOrThrow()
@@ -190,21 +190,39 @@ class MainActivity : FragmentActivity() {
                                 securityRepo = securityRepository
                             )
                         }
-                        // Errors silently ignored — first login, no backup yet is fine
-                        loginRestoreInProgress = false
                     }
-                } else {
-                    profileGoogleSignInInProgress = false
-                    pendingProfileCallback = null
+                    // No backup is fine on first login; other restore errors are shown.
+                    restoreResult.onFailure { e ->
+                        val message = e.localizedMessage.orEmpty()
+                        if (!message.contains("No Google Drive backup", ignoreCase = true)) {
+                            profileSignInErrorMessage =
+                                "Signed in, but Drive restore failed: ${message.ifBlank { "network timeout" }}"
+                        }
+                    }
+                    loginRestoreInProgress = false
                 }
             } catch (e: ApiException) {
+                android.util.Log.w("SignIn", "Google Sign-In failed: code ${e.statusCode}", e)
+
+                // DEVELOPER_ERROR (code 10) means this build's signing certificate
+                // is not registered in Firebase, so Firebase Auth cannot return the
+                // UID that owns the user's Firestore data.
                 profileGoogleSignInInProgress = false
                 loginRestoreInProgress = false
                 pendingProfileCallback = null
-                android.util.Log.w("SignIn", "Google Sign-In failed: code ${e.statusCode}")
-                driveStatusMessage = "Sign-in failed (code ${e.statusCode}). Please try again."
+                val msg = when (e.statusCode) {
+                    com.google.android.gms.common.api.CommonStatusCodes.CANCELED,
+                    12501 -> "" // user cancelled â€” no error shown
+                    com.google.android.gms.common.api.CommonStatusCodes.NETWORK_ERROR,
+                    7 -> "Network error. Check your internet connection and try again."
+                    10 -> "Google sign-in failed because this app build is not registered in Firebase. Add the APK signing SHA-1 to Firebase, download google-services.json again, and rebuild."
+                    else -> "Sign-in failed (code ${e.statusCode}). Please try again."
+                }
+                profileSignInErrorMessage = msg
+                driveStatusMessage = if (msg.isNotBlank()) msg else driveStatusMessage
             }
         }
+
         val biometricAvailable = remember { biometricAuthManager.canAuthenticate(this@MainActivity) }
         val lockedAccountIds = remember(cards) {
             cards.filter(CardSummary::hasLedgerActivity).mapTo(linkedSetOf()) { it.id }
@@ -287,7 +305,7 @@ class MainActivity : FragmentActivity() {
             }
         }
 
-        // ── Google Drive helpers ──────────────────────────────────────────────
+        // â”€â”€ Google Drive helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         suspend fun performDriveBackup(account: GoogleSignInAccount) {
             driveOperationInProgress = true
@@ -324,7 +342,7 @@ class MainActivity : FragmentActivity() {
             driveStatusMessage = "Downloading from Google Drive..."
             mainViewModel.updateDriveOperationMessage("Restoring from Google Drive...")
             try {
-                // Step 1: download JSON with a timeout — this is the network-bound part
+                // Step 1: download JSON with a timeout â€” this is the network-bound part
                 val json = runCatching {
                     withTimeout(60_000L) {
                         val token = GoogleSignInHelper.fetchAccessToken(applicationContext, account)
@@ -337,7 +355,7 @@ class MainActivity : FragmentActivity() {
                     return
                 }
 
-                // Step 2: restore into Firestore — no timeout, let it complete fully
+                // Step 2: restore into Firestore â€” no timeout, let it complete fully
                 driveStatusMessage = "Restoring data..."
                 mainViewModel.updateDriveOperationMessage("Applying restored Drive data...")
                 runCatching {
@@ -428,7 +446,7 @@ class MainActivity : FragmentActivity() {
             }
         }
 
-        // ─────────────────────────────────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         val exportBackupLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.CreateDocument("application/json")
@@ -469,7 +487,7 @@ class MainActivity : FragmentActivity() {
                         stopTimestamp = System.currentTimeMillis()
                     }
                     Lifecycle.Event.ON_START -> {
-                        // App came back — lock if it was backgrounded for more than 1.5 minutes.
+                        // App came back â€” lock if it was backgrounded for more than 1.5 minutes.
                         // This covers: device lock/sleep, home button, recent apps, app killed.
                         // It does NOT fire on in-app navigation (tab switches, screen changes).
                         val elapsed = System.currentTimeMillis() - stopTimestamp
@@ -481,6 +499,7 @@ class MainActivity : FragmentActivity() {
                             !externalDocumentFlowInProgress
                         ) {
                             securityRepository.lock()
+                            sessionUnlocked = false
                         }
                         stopTimestamp = 0L
                     }
@@ -504,7 +523,7 @@ class MainActivity : FragmentActivity() {
             profile?.isProfileComplete == true &&
             securityState.lockEnabled &&
             securityState.hasPasscode &&
-            !securityState.isUnlocked
+            !sessionUnlocked
 
         RadafiqTheme(themeMode = settingsState.themeMode) {
             when {
@@ -524,25 +543,36 @@ class MainActivity : FragmentActivity() {
                         profile = profile,
                         onSave = { displayName, businessName, email, photoUrl ->
                             coroutineScope.launch {
-                                profileRepository.saveProfile(displayName, businessName, email, photoUrl)
+                                try {
+                                    profileRepository.saveProfile(displayName, businessName, email, photoUrl)
+                                } catch (e: Exception) {
+                                    android.util.Log.e("SignIn", "Profile save failed", e)
+                                }
                             }
                         },
                         onSignInWithGoogle = {
+                            profileSignInErrorMessage = ""
                             profileGoogleSignInInProgress = true
                             pendingProfileCallback = { name, _, email, photo ->
                                 coroutineScope.launch {
-                                    profileRepository.saveProfile(name, profile?.businessName.orEmpty(), email, photo)
+                                    try {
+                                        profileRepository.saveProfile(name, profile?.businessName.orEmpty(), email, photo)
+                                    } catch (e: Exception) {
+                                        android.util.Log.e("SignIn", "Profile save after sign-in failed", e)
+                                    }
                                 }
                             }
-                            GoogleSignInHelper.buildClient(applicationContext).signOut()
-                                .addOnCompleteListener {
-                                    profileGoogleSignInLauncher.launch(
-                                        GoogleSignInHelper.signInIntent(applicationContext)
-                                    )
-                                }
+                            // Launch directly â€” the Google sign-in chooser always shows the
+                            // account picker on a fresh install. The old signOut().addOnCompleteListener
+                            // pattern could silently stall if the GMS task completed synchronously
+                            // before the listener was registered, leaving the button stuck.
+                            profileGoogleSignInLauncher.launch(
+                                GoogleSignInHelper.signInIntent(applicationContext, requestIdToken = true)
+                            )
                         },
                         googleSignInInProgress = profileGoogleSignInInProgress || loginRestoreInProgress,
-                        loginRestoreInProgress = loginRestoreInProgress
+                        loginRestoreInProgress = loginRestoreInProgress,
+                        signInErrorMessage = profileSignInErrorMessage
                     )
                 }
 
@@ -761,26 +791,33 @@ class MainActivity : FragmentActivity() {
                                 profile = profile,
                                 onSave = { displayName, businessName, email, photoUrl ->
                                     coroutineScope.launch {
-                                        profileRepository.saveProfile(displayName, businessName, email, photoUrl)
+                                        try {
+                                            profileRepository.saveProfile(displayName, businessName, email, photoUrl)
+                                        } catch (e: Exception) {
+                                            android.util.Log.e("SignIn", "Profile save from profile screen failed", e)
+                                        }
                                         navController.popBackStack()
                                     }
                                 },
                                 onSignInWithGoogle = {
+                                    profileSignInErrorMessage = ""
                                     profileGoogleSignInInProgress = true
                                     pendingProfileCallback = { name, _, email, photo ->
                                         coroutineScope.launch {
-                                            profileRepository.saveProfile(name, profile?.businessName.orEmpty(), email, photo)
+                                            try {
+                                                profileRepository.saveProfile(name, profile?.businessName.orEmpty(), email, photo)
+                                            } catch (e: Exception) {
+                                                android.util.Log.e("SignIn", "Profile save after sign-in failed", e)
+                                            }
                                         }
                                     }
-                                    GoogleSignInHelper.buildClient(applicationContext).signOut()
-                                        .addOnCompleteListener {
-                                            profileGoogleSignInLauncher.launch(
-                                                GoogleSignInHelper.signInIntent(applicationContext)
-                                            )
-                                        }
+                                    profileGoogleSignInLauncher.launch(
+                                        GoogleSignInHelper.signInIntent(applicationContext, requestIdToken = true)
+                                    )
                                 },
                                 googleSignInInProgress = profileGoogleSignInInProgress || loginRestoreInProgress,
-                                loginRestoreInProgress = loginRestoreInProgress
+                                loginRestoreInProgress = loginRestoreInProgress,
+                                signInErrorMessage = profileSignInErrorMessage
                             )
                         }
 

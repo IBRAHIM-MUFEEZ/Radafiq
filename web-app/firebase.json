@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "radafiq-272f9",
     "public": "dist",
     "ignore": [
       "firebase.json",

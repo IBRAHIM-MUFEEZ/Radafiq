@@ -310,7 +310,8 @@ fun HomeScreen(
     val customers by vm.customers.collectAsState()
     val driveOperationMessage by vm.driveOperationMessage.collectAsState()
 
-    val usedAccountIds = remember(customers) {
+    val snapshotKey = customers.sumOf { it.snapshotVersion }
+    val usedAccountIds = remember(snapshotKey) {
         val set = mutableSetOf<String>()
         customers.forEach { c -> c.transactions.forEach { set.add(it.accountId) } }
         set
@@ -332,7 +333,7 @@ fun HomeScreen(
         val nonEmiDueByAccount: Map<String, Double>,
         val personSummaries: List<PersonSummary>
     )
-    val customerAgg = remember(customers) {
+    val customerAgg = remember(snapshotKey) {
         val emiMap = mutableMapOf<String, Double>()
         val nonEmiMap = mutableMapOf<String, Double>()
         val personMap = linkedMapOf<String, Triple<String, Double, Double>>()
@@ -349,7 +350,7 @@ fun HomeScreen(
                             else Triple(existing.first, existing.second + used, existing.third + due)
                     }
                 } else if (!t.isEmi) {
-                    if (!t.isScheduledForFutureMonth()) {
+                    if (t.isVisibleInTransactions()) {
                         val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
                         if (due > 0.0) nonEmiMap[t.accountId] = (nonEmiMap[t.accountId] ?: 0.0) + due
                     }
@@ -368,7 +369,7 @@ fun HomeScreen(
         )
     }
 
-    val availableKinds = remember(visibleCards, customerAgg.personSummaries) {
+    val availableKinds = remember(snapshotKey) {
         val kinds = visibleCards.map { it.accountKind }.toMutableList()
         if (customerAgg.personSummaries.isNotEmpty() && AccountKind.PERSON !in kinds) kinds.add(AccountKind.PERSON)
         kinds.distinct()
@@ -386,8 +387,16 @@ fun HomeScreen(
         else -> emptyList()
     }
 
+    // Compute savings list before LazyColumn (remember must be called at composable scope)
+    val savingsCustomers = remember(snapshotKey) {
+        customers.filter { it.savingsBalance > 0.0 }
+            .sortedByDescending { it.savingsBalance }
+    }
+
     LazyColumn(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .radafiqScrollBackground(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
@@ -564,6 +573,75 @@ fun HomeScreen(
                 }
             }
         }
+
+        // ── Savings summary section ───────────────────────────────────────────
+        if (savingsCustomers.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Savings",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Text(
+                    text = "Customer savings held in bank accounts.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+            items(savingsCustomers, key = { "savings_home_${it.id}" }) { c ->
+                HomeSavingsCard(customer = c)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeSavingsCard(customer: com.radafiq.data.models.CustomerSummary) {
+    val accent = MaterialTheme.colorScheme.secondary
+    FlowCard(accentColor = accent) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = customer.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                // Show the latest bank account name if available
+                val latestBankName = customer.savingsEntries
+                    .filter { it.bankAccountName.isNotBlank() }
+                    .maxByOrNull { it.date }?.bankAccountName
+                if (latestBankName != null) {
+                    Text(
+                        text = "🏦 $latestBankName",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accent,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                AnimatedMoney(
+                    value = customer.savingsBalance,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = accent
+                )
+                Text(
+                    text = "Savings Balance",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 
@@ -709,7 +787,7 @@ private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOut
                 ) {
                     Icon(
                         imageVector = if (isOutgoing) Icons.Default.NorthEast else Icons.Default.SouthWest,
-                        contentDescription = null,
+                        contentDescription = if (isOutgoing) "Outgoing transaction" else "Incoming transaction",
                         tint = accentColor
                     )
                 }
@@ -900,7 +978,7 @@ fun EmiScheduleScreen(
     // Collect every EMI instalment across all customers, only from groups
     // Collect every EMI instalment across all customers, grouped by plan.
     // Shows all EMI groups that have at least one instalment recorded.
-    val allRows: List<EmiGroupRow> = remember(customers, today) {
+    val allRows: List<EmiGroupRow> = remember(customers.sumOf { it.snapshotVersion }, today) {
         val result = mutableListOf<EmiGroupRow>()
 
         customers.forEach { customer ->
@@ -918,10 +996,13 @@ fun EmiScheduleScreen(
 
                 byIndex.forEach { (emiIndex, parts) ->
                     val first = parts.first()
-                    val date = runCatching { LocalDate.parse(first.transactionDate) }.getOrNull()
-                    val isPast = date == null || !date.isAfter(today)
-                    val isCurrent = date != null &&
-                        date.year == today.year && date.monthValue == today.monthValue
+                    // Use dueDate for past/current classification when available;
+                    // fall back to transactionDate for legacy records without a dueDate.
+                    val dueDateStr = first.dueDate.ifBlank { first.transactionDate }
+                    val dueLocalDate = runCatching { LocalDate.parse(dueDateStr) }.getOrNull()
+                    val isPast = dueLocalDate == null || !dueLocalDate.isAfter(today)
+                    val isCurrent = dueLocalDate != null &&
+                        dueLocalDate.year == today.year && dueLocalDate.monthValue == today.monthValue
                     val planName = first.name.substringBefore(" — EMI").trim()
                     val combinedAmount = parts.sumOf { it.amount }
                     val allSettled = parts.all { it.isSettled }
@@ -962,7 +1043,7 @@ fun EmiScheduleScreen(
     }
 
     // Group rows by EMI group for the amortization table view
-    val groupedByPlan: List<Pair<String, List<EmiGroupRow>>> = remember(allRows) {
+    val groupedByPlan: List<Pair<String, List<EmiGroupRow>>> = remember(customers.sumOf { it.snapshotVersion }, today) {
         allRows
             .groupBy { it.groupId }
             .entries
@@ -970,19 +1051,21 @@ fun EmiScheduleScreen(
             .map { (groupId, rows) -> groupId to rows }
     }
 
-    val totalUpcoming = remember(allRows) {
+    val emiSnapshotKey = customers.sumOf { it.snapshotVersion }
+    val totalUpcoming = remember(emiSnapshotKey) {
         allRows.filter { !it.isPast && !it.isSettled }.sumOf { it.amount }
     }
-    val totalPaid = remember(allRows) {
+    val totalPaid = remember(emiSnapshotKey) {
         allRows.filter { it.isSettled }.sumOf { it.amount }
     }
-    val totalPending = remember(allRows) {
+    val totalPending = remember(emiSnapshotKey) {
         allRows.filter { it.isPast && !it.isSettled }.sumOf { it.amount }
     }
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
+            .radafiqScrollBackground()
             .padding(horizontal = 16.dp),
         contentPadding = PaddingValues(top = 16.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -1191,7 +1274,7 @@ private fun EmiAmortizationCard(
             ) {
                 Icon(
                     imageVector = if (expanded) Icons.Default.AccountBox else Icons.Default.CalendarMonth,
-                    contentDescription = null,
+                    contentDescription = if (expanded) "Collapse schedule" else "Expand schedule",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(14.dp)
                 )
@@ -1274,18 +1357,25 @@ private fun EmiTableHeader() {
             modifier = Modifier.width(24.dp)
         )
         Text(
+            text = "Txn Date",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1.3f)
+        )
+        Text(
             text = "Due Date",
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1.6f)
+            modifier = Modifier.weight(1.3f)
         )
         Text(
             text = "Amount",
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1.4f),
+            modifier = Modifier.weight(1.2f),
             textAlign = androidx.compose.ui.text.style.TextAlign.End
         )
         Text(
@@ -1293,7 +1383,7 @@ private fun EmiTableHeader() {
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(72.dp),
+            modifier = Modifier.width(64.dp),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
     }
@@ -1319,6 +1409,8 @@ private fun EmiTableRow(row: EmiGroupRow, today: LocalDate, vm: MainViewModel) {
         else -> Color.Transparent
     }
 
+    var showDueDatePicker by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1333,8 +1425,8 @@ private fun EmiTableRow(row: EmiGroupRow, today: LocalDate, vm: MainViewModel) {
             color = statusColor,
             modifier = Modifier.width(24.dp)
         )
-        // Date + optional Split badge
-        Column(modifier = Modifier.weight(1.6f)) {
+        // Txn Date column — computed as dueDate - 20 days, read-only
+        Column(modifier = Modifier.weight(1.3f)) {
             Text(
                 text = formatDisplayDate(row.transactionDate),
                 style = MaterialTheme.typography.bodySmall,
@@ -1355,19 +1447,38 @@ private fun EmiTableRow(row: EmiGroupRow, today: LocalDate, vm: MainViewModel) {
                 )
             }
         }
+        // Due Date column — tappable to edit; saving updates Firestore and
+        // automatically recalculates transactionDate (dueDate - 20 days) at read time
+        val dueDateDisplay = if (row.dueDate.isNotBlank()) formatDisplayDate(row.dueDate)
+                             else formatDisplayDate(row.transactionDate)
+        Text(
+            text = dueDateDisplay,
+            style = MaterialTheme.typography.bodySmall,
+            color = statusColor,
+            fontWeight = if (row.isCurrent || (row.isPast && !row.isSettled)) FontWeight.SemiBold
+                         else FontWeight.Normal,
+            modifier = Modifier
+                .weight(1.3f)
+                .clip(RoundedCornerShape(4.dp))
+                .clickable { showDueDatePicker = true }
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.07f))
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
         Text(
             text = formatMoney(row.amount),
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1.4f),
+            modifier = Modifier.weight(1.2f),
             textAlign = androidx.compose.ui.text.style.TextAlign.End,
             maxLines = 1
         )
         // Status badge — tappable to toggle settled for ALL parts of this installment
         Box(
             modifier = Modifier
-                .width(72.dp)
+                .width(64.dp)
                 .padding(start = 6.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -1388,6 +1499,57 @@ private fun EmiTableRow(row: EmiGroupRow, today: LocalDate, vm: MainViewModel) {
                     .padding(horizontal = 6.dp, vertical = 4.dp)
             )
         }
+    }
+
+    if (showDueDatePicker) {
+        val initialDate = row.dueDate.ifBlank { row.transactionDate }
+        EmiDueDatePickerDialog(
+            initialDateIso = initialDate,
+            onDateSelected = { iso ->
+                vm.updateEmiDueDate(row.transactionIds, iso)
+                showDueDatePicker = false
+            },
+            onDismiss = { showDueDatePicker = false }
+        )
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun EmiDueDatePickerDialog(
+    initialDateIso: String,
+    onDateSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val initialMillis = remember(initialDateIso) {
+        runCatching {
+            java.time.LocalDate.parse(initialDateIso)
+                .atStartOfDay(java.time.ZoneOffset.UTC)
+                .toInstant().toEpochMilli()
+        }.getOrDefault(System.currentTimeMillis())
+    }
+    val state = androidx.compose.material3.rememberDatePickerState(
+        initialSelectedDateMillis = initialMillis
+    )
+    androidx.compose.material3.DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                val millis = state.selectedDateMillis
+                if (millis != null) {
+                    val iso = java.time.Instant.ofEpochMilli(millis)
+                        .atZone(java.time.ZoneOffset.UTC)
+                        .toLocalDate()
+                        .toString()
+                    onDateSelected(iso)
+                } else onDismiss()
+            }) { Text("OK") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    ) {
+        androidx.compose.material3.DatePicker(state = state)
     }
 }
 

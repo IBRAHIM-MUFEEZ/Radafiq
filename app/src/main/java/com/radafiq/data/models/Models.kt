@@ -1,7 +1,6 @@
 package com.radafiq.data.models
 
 import java.time.LocalDate
-import java.time.YearMonth
 
 enum class AccountKind(
     val storageValue: String,
@@ -172,7 +171,10 @@ data class CustomerSummary(
     val transactions: List<CustomerTransaction>,
     val isDeleted: Boolean = false,
     val savingsBalance: Double = 0.0,
-    val savingsEntries: List<SavingsEntry> = emptyList()
+    val savingsEntries: List<SavingsEntry> = emptyList(),
+    /** Monotonically increments on every Firestore snapshot so remember(customer)
+     *  always invalidates even when transactions list is structurally equal. */
+    val snapshotVersion: Long = 0L
 )
 
 data class SavingsEntry(
@@ -205,7 +207,7 @@ data class CustomerTransaction(
     val accountName: String,
     val accountKind: AccountKind,
     val amount: Double,
-    val transactionDate: String,
+    private val _transactionDate: String,
     val isSettled: Boolean = false,
     val settledDate: String = "",
     val partialPaidAmount: Double = 0.0,
@@ -220,26 +222,72 @@ data class CustomerTransaction(
     val isEmi: Boolean get() = emiGroupId.isNotBlank()
     val isSplit: Boolean get() = splitGroupId.isNotBlank()
 
-    private fun installmentDate(): LocalDate? {
-        return runCatching { LocalDate.parse(transactionDate) }.getOrNull()
+    /** Creates a copy with a new stored transaction date (used for optimistic updates). */
+    fun withStoredDate(date: String): CustomerTransaction =
+        copy(_transactionDate = date)
+
+    companion object {
+        /** Public factory used for optimistic local creation outside this class,
+         *  since _transactionDate is a private constructor parameter. */
+        fun create(
+            id: String,
+            customerId: String,
+            name: String,
+            accountId: String,
+            accountName: String,
+            accountKind: AccountKind,
+            amount: Double,
+            transactionDate: String,
+            isSettled: Boolean = false,
+            settledDate: String = "",
+            partialPaidAmount: Double = 0.0,
+            dueDate: String = "",
+            personName: String = "",
+            splitGroupId: String = "",
+            emiGroupId: String = "",
+            emiIndex: Int = 0,
+            emiTotal: Int = 0
+        ) = CustomerTransaction(
+            id = id,
+            customerId = customerId,
+            name = name,
+            accountId = accountId,
+            accountName = accountName,
+            accountKind = accountKind,
+            amount = amount,
+            _transactionDate = transactionDate,
+            isSettled = isSettled,
+            settledDate = settledDate,
+            partialPaidAmount = partialPaidAmount,
+            dueDate = dueDate,
+            personName = personName,
+            splitGroupId = splitGroupId,
+            emiGroupId = emiGroupId,
+            emiIndex = emiIndex,
+            emiTotal = emiTotal
+        )
     }
 
-    fun isScheduledForFutureMonth(referenceDate: LocalDate = LocalDate.now()): Boolean {
-        if (!isEmi) return false
-        val installmentDate = installmentDate() ?: return false
-        return YearMonth.from(installmentDate).isAfter(YearMonth.from(referenceDate))
+    /**
+     * For EMI transactions: always computed as dueDate - 20 days so the installment
+     * appears in the transaction tab 20 days before payment is due.
+     * For all other transactions: the stored date as-is.
+     */
+    val transactionDate: String get() {
+        if (isEmi && dueDate.isNotBlank()) {
+            val due = runCatching { LocalDate.parse(dueDate) }.getOrNull()
+            if (due != null) return due.minusDays(20).toString()
+        }
+        return _transactionDate
     }
 
     fun isVisibleInTransactions(referenceDate: LocalDate = LocalDate.now()): Boolean {
         if (!isEmi) return true
-        // Rule 1: transaction date is current month or past
-        if (!isScheduledForFutureMonth(referenceDate)) return true
-        // Rule 2: due date is within 20 days — show early so user can prepare
-        if (dueDate.isNotBlank()) {
-            val due = runCatching { LocalDate.parse(dueDate) }.getOrNull()
-            if (due != null && !due.isAfter(referenceDate.plusDays(20))) return true
-        }
-        return false
+        // An EMI installment is visible only when its transaction date (dueDate - 20 days)
+        // has reached or passed today. No early-show logic.
+        val txnDate = runCatching { LocalDate.parse(transactionDate) }.getOrNull()
+            ?: return true  // if date can't be parsed, show it rather than hide it
+        return !txnDate.isAfter(referenceDate)
     }
 
     /** True if this transaction's due date is today or in the past and it is not settled. */
@@ -285,3 +333,41 @@ data class Payment(
     val amount: Double = 0.0,
     val date: String = ""
 )
+
+data class SettlementHistoryEntry(
+    val id: String,
+    val transactionId: String,
+    val customerId: String,
+    val type: String,       // "settled", "partial", "unsettled"
+    val amount: Double,
+    val previousPartialPaid: Double,
+    val newPartialPaid: Double,
+    val previousIsSettled: Boolean,
+    val newIsSettled: Boolean,
+    val date: String,
+    val timestamp: Long = 0L
+) {
+    val label: String get() = when (type) {
+        "settled" -> "Fully Settled"
+        "partial" -> "Partial Payment"
+        "unsettled" -> "Marked Unpaid"
+        else -> type
+    }
+}
+
+/**
+ * Settlement history entry enriched with the transaction name — used for the
+ * customer-level "Settlement History" view that shows all payment events across
+ * every transaction in one consolidated list.
+ */
+data class CustomerSettlementEntry(
+    val base: SettlementHistoryEntry,
+    val transactionName: String
+) {
+    val id: String get() = base.id
+    val type: String get() = base.type
+    val amount: Double get() = base.amount
+    val date: String get() = base.date
+    val timestamp: Long get() = base.timestamp
+    val label: String get() = base.label
+}

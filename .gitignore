@@ -26,3 +26,5 @@ web-app/serviceAccountKey.json
 # Release signing keystore — NEVER commit this
 *.jks
 *.keystore
+# Exception: shared debug keystore for consistent SHA-1 across machines
+!app/radafiq-debug.jks

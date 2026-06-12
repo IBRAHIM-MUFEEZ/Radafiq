@@ -9,8 +9,11 @@ import com.radafiq.data.backup.DriveBackupRepository
 import com.radafiq.data.models.AccountKind
 import com.radafiq.data.models.AppData
 import com.radafiq.data.models.CardSummary
+import com.radafiq.data.models.CustomerSettlementEntry
 import com.radafiq.data.models.CustomerSummary
+import com.radafiq.data.models.CustomerTransaction
 import com.radafiq.data.models.FirestoreBackupPayload
+import com.radafiq.data.models.SettlementHistoryEntry
 import com.radafiq.data.models.SplitEntry
 import com.radafiq.data.profile.UserProfileRepository
 import com.radafiq.data.repository.FirebaseRepository
@@ -63,6 +66,56 @@ class MainViewModel(
     private val _driveOperationMessage = MutableStateFlow<String?>(null)
     val driveOperationMessage: StateFlow<String?> = _driveOperationMessage.asStateFlow()
 
+    private val _settlementHistory = MutableStateFlow<List<SettlementHistoryEntry>>(emptyList())
+    val settlementHistory: StateFlow<List<SettlementHistoryEntry>> = _settlementHistory.asStateFlow()
+
+    private val _settlementHistoryLoading = MutableStateFlow(false)
+    val settlementHistoryLoading: StateFlow<Boolean> = _settlementHistoryLoading.asStateFlow()
+
+    fun loadSettlementHistory(transactionId: String) {
+        viewModelScope.launch {
+            _settlementHistoryLoading.value = true
+            try {
+                _settlementHistory.value = repository.getSettlementHistory(transactionId)
+            } catch (e: Exception) {
+                android.util.Log.e("SettlementHistory", "Failed to load history: ${e.localizedMessage}", e)
+                _settlementHistory.value = emptyList()
+            } finally {
+                _settlementHistoryLoading.value = false
+            }
+        }
+    }
+
+    // ── Customer-wide consolidated settlement history ─────────────────────────
+    private val _allSettlementHistory = MutableStateFlow<List<CustomerSettlementEntry>>(emptyList())
+    val allSettlementHistory: StateFlow<List<CustomerSettlementEntry>> = _allSettlementHistory.asStateFlow()
+
+    private val _allSettlementHistoryLoading = MutableStateFlow(false)
+    val allSettlementHistoryLoading: StateFlow<Boolean> = _allSettlementHistoryLoading.asStateFlow()
+
+    /**
+     * Loads settlement history for every transaction in [customer], combining
+     * them into a single list sorted newest-first.  Mirrors the web app's
+     * "Settlement History" button that shows all payment events under the
+     * customer summary card.
+     */
+    fun loadAllSettlementHistory(customer: CustomerSummary) {
+        viewModelScope.launch {
+            _allSettlementHistoryLoading.value = true
+            _allSettlementHistory.value = emptyList()
+            try {
+                val txnPairs = customer.transactions
+                    .map { it.id to it.name }
+                _allSettlementHistory.value = repository.getAllSettlementHistory(txnPairs)
+            } catch (e: Exception) {
+                android.util.Log.e("AllSettlementHistory", "Failed: ${e.localizedMessage}", e)
+                _allSettlementHistory.value = emptyList()
+            } finally {
+                _allSettlementHistoryLoading.value = false
+            }
+        }
+    }
+
     // In-progress transaction form draft — survives lock/unlock
     private val _draftTransaction = MutableStateFlow(DraftTransactionState())
     val draftTransaction: StateFlow<DraftTransactionState> = _draftTransaction.asStateFlow()
@@ -73,6 +126,58 @@ class MainViewModel(
 
     fun clearDraftTransaction() {
         _draftTransaction.value = DraftTransactionState()
+    }
+
+    // ── Optimistic local update ───────────────────────────────────────────────
+    // Immediately mutates _customers in-memory so the UI reflects writes instantly.
+    // The real Firestore snapshot will overwrite this with server-confirmed data shortly after.
+    // NOTE: optimistic ADD is intentionally excluded — it would create temp IDs that break
+    // the delete flow. Firestore snapshot arrives fast enough that the add latency is acceptable.
+
+    private fun optimisticallyAddTransaction(customerId: String, txn: CustomerTransaction) {
+        _customers.value = _customers.value.map { customer ->
+            if (customer.id != customerId) return@map customer
+            val newTxns = customer.transactions + txn
+            rebuildSummary(customer, newTxns)
+        }
+    }
+
+    private fun optimisticallyUpdateTransaction(transactionId: String, update: (CustomerTransaction) -> CustomerTransaction) {
+        _customers.value = _customers.value.map { customer ->
+            val idx = customer.transactions.indexOfFirst { it.id == transactionId }
+            if (idx < 0) return@map customer
+            val newTxns = customer.transactions.toMutableList().also { it[idx] = update(it[idx]) }
+            rebuildSummary(customer, newTxns)
+        }
+    }
+
+    private fun optimisticallyDeleteTransaction(transactionId: String) {
+        _customers.value = _customers.value.map { customer ->
+            val newTxns = customer.transactions.filter { it.id != transactionId }
+            if (newTxns.size == customer.transactions.size) return@map customer
+            rebuildSummary(customer, newTxns)
+        }
+    }
+
+    /** Rebuilds a CustomerSummary with a new transaction list, recomputing all totals. */
+    private fun rebuildSummary(customer: CustomerSummary, newTxns: List<CustomerTransaction>): CustomerSummary {
+        val visible = newTxns.filter { it.isVisibleInTransactions() }
+        val totalAmount = visible.sumOf { it.amount }
+        val settledAmount = visible.filter { it.isSettled }.sumOf { it.amount }
+        val partialAmount = visible.filter { !it.isSettled }.sumOf { it.partialPaidAmount }
+        val paidAmount = customer.manualPaidAmount + settledAmount + partialAmount
+        val sorted = newTxns.sortedWith(
+            compareByDescending<CustomerTransaction> { it.transactionDate }.thenByDescending { it.id }
+        )
+        return customer.copy(
+            totalAmount = totalAmount,
+            creditDueAmount = paidAmount,
+            settledTransactionAmount = settledAmount,
+            partialPaidAmount = partialAmount,
+            balance = (totalAmount - paidAmount).coerceAtLeast(0.0),
+            transactions = sorted,
+            snapshotVersion = customer.snapshotVersion + 1
+        )
     }
 
     // Sync status for the customers tab sync button
@@ -207,23 +312,30 @@ class MainViewModel(
         _syncStatus.value = SyncStatus(SyncState.SYNCING, "Syncing...")
         syncStatusResetJob?.cancel()
         try {
-            val token = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                GoogleSignInHelper.fetchAccessToken(context, account)
-            }
-            val payload = repository.exportBackup(
-                profile = profileRepository?.exportProfileMap() ?: emptyMap(),
-                settings = mapOf(
-                    "app" to (settingsRepository?.exportSettings() ?: emptyMap()),
-                    "security" to (securityRepository?.exportSettings() ?: emptyMap())
+            // 30-second hard timeout — prevents the backup job from hanging indefinitely
+            // when offline or on a weak connection, which was blocking snapshot delivery.
+            kotlinx.coroutines.withTimeout(30_000L) {
+                val token = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    GoogleSignInHelper.fetchAccessToken(context, account)
+                }
+                val payload = repository.exportBackup(
+                    profile = profileRepository?.exportProfileMap() ?: emptyMap(),
+                    settings = mapOf(
+                        "app" to (settingsRepository?.exportSettings() ?: emptyMap()),
+                        "security" to (securityRepository?.exportSettings() ?: emptyMap())
+                    )
                 )
-            )
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                val json = BackupJsonSerializer.toJson(payload)
-                driveBackupRepository.uploadBackup(token, json).getOrThrow()
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val json = BackupJsonSerializer.toJson(payload)
+                    driveBackupRepository.uploadBackup(token, json).getOrThrow()
+                }
             }
             settingsRepository?.setLastDriveBackupTime(currentTimestampLabel())
             setSyncResult(SyncState.SUCCESS, "Synced successfully.")
             android.util.Log.d("AutoBackup", "Auto-backup succeeded")
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            setSyncResult(SyncState.ERROR, "Sync timed out — will retry on next change.")
+            android.util.Log.w("AutoBackup", "Auto-backup timed out")
         } catch (e: java.net.UnknownHostException) {
             setSyncResult(SyncState.ERROR, "No internet connection.")
         } catch (e: java.net.SocketTimeoutException) {
@@ -461,6 +573,7 @@ class MainViewModel(
         if (transactionName.isBlank()) return
         // For non-person accounts, accountId must be non-blank
         if (accountKind != AccountKind.PERSON && accountId.isBlank()) return
+        val safeDate = transactionDate.ifBlank { LocalDate.now().toString() }
         viewModelScope.launch {
             repository.addTransaction(
                 customerId = customerId,
@@ -470,9 +583,10 @@ class MainViewModel(
                 accountKind = accountKind,
                 customerName = customerName.trim(),
                 amount = parsedAmount,
-                transactionDate = transactionDate.ifBlank { LocalDate.now().toString() },
+                transactionDate = safeDate,
                 personName = personName.trim()
             )
+            // Firestore snapshot listener delivers the confirmed doc — no temp ID needed
         }
     }
 
@@ -506,10 +620,13 @@ class MainViewModel(
             try {
                 val instalments = (0 until months).map { i ->
                     val emiAmount = if (i == 0) firstEmi else baseEmi
-                    val emiDate = dateOverrides[i]?.let {
+                    // dueDate = same day next month for each instalment (baseDate + i+1 months)
+                    // transactionDate = dueDate - 20 days (so it appears in the transaction tab
+                    // 20 days before payment is due, giving the user time to prepare)
+                    val dueDate = dateOverrides[i]?.let {
                         runCatching { LocalDate.parse(it) }.getOrNull()
-                    } ?: baseDate.plusMonths(i.toLong())
-                    val dueDate = emiDate.plusMonths(1)
+                    } ?: baseDate.plusMonths((i + 1).toLong())
+                    val emiDate = dueDate.minusDays(20)
                     mutableMapOf<String, Any>(
                         "customerId" to customerId,
                         "transactionName" to "${transactionName.trim()} — EMI ${i + 1}/$months",
@@ -542,13 +659,27 @@ class MainViewModel(
         accountKind: AccountKind,
         amount: String,
         transactionDate: String,
-        personName: String = ""
+        personName: String = "",
+        dueDate: String = ""
     ) {
         val parsedAmount = amount.toDoubleOrNull() ?: return
         // BUG-36: Validate required fields before writing to Firestore
         if (parsedAmount <= 0.0) return
         if (transactionId.isBlank()) return
         if (transactionName.isBlank()) return
+        val safeDate = transactionDate.ifBlank { LocalDate.now().toString() }
+        // Optimistic update — reflect in UI immediately
+        optimisticallyUpdateTransaction(transactionId) { old ->
+            old.copy(
+                name = transactionName.trim(),
+                accountId = accountId,
+                accountName = accountName,
+                accountKind = accountKind,
+                amount = parsedAmount,
+                personName = personName.trim(),
+                dueDate = dueDate
+            ).withStoredDate(safeDate)
+        }
         viewModelScope.launch {
             repository.updateTransaction(
                 transactionId = transactionId,
@@ -557,29 +688,62 @@ class MainViewModel(
                 accountName = accountName,
                 accountKind = accountKind,
                 amount = parsedAmount,
-                transactionDate = transactionDate.ifBlank { LocalDate.now().toString() },
-                personName = personName.trim()
+                transactionDate = safeDate,
+                personName = personName.trim(),
+                dueDate = dueDate
             )
         }
     }
 
     fun deleteTransaction(transactionId: String) {
-        viewModelScope.launch { repository.deleteTransaction(transactionId) }
+        android.util.Log.d("DeleteTxn", "deleteTransaction called: id='$transactionId'")
+        if (transactionId.isBlank() || transactionId.startsWith("optimistic_")) {
+            android.util.Log.w("DeleteTxn", "Skipped: blank or temp id")
+            return
+        }
+        optimisticallyDeleteTransaction(transactionId)
+        viewModelScope.launch {
+            try {
+                repository.deleteTransaction(transactionId)
+                android.util.Log.d("DeleteTxn", "Firestore delete SUCCESS: $transactionId")
+            } catch (e: Exception) {
+                android.util.Log.e("DeleteTxn", "Firestore delete FAILED: $transactionId — ${e.localizedMessage}", e)
+            }
+        }
+    }
+
+    /**
+     * Updates the dueDate for all parts of an EMI installment (handles split installments
+     * where multiple transaction IDs share the same emiIndex).
+     * transactionDate is derived from dueDate at read time — no extra write needed.
+     */
+    fun updateEmiDueDate(transactionIds: List<String>, dueDate: String) {
+        if (transactionIds.isEmpty() || dueDate.isBlank()) return
+        viewModelScope.launch {
+            transactionIds.forEach { id ->
+                try {
+                    repository.updateEmiDueDate(id, dueDate)
+                } catch (e: Exception) {
+                    android.util.Log.e("EMI", "Failed to update dueDate for $id: ${e.localizedMessage}", e)
+                }
+            }
+        }
     }
 
     fun addPartialPayment(transactionId: String, amount: String) {
         val parsedAmount = amount.toDoubleOrNull() ?: return
         if (parsedAmount <= 0.0) return
-        // FIX-10: Cap partial payment so it cannot exceed the transaction amount.
-        // We look up the transaction in the current customer list to find its amount
-        // and existing partialPaidAmount before writing.
         val transaction = _customers.value
             .flatMap { it.transactions }
             .find { it.id == transactionId }
         if (transaction != null) {
             val maxAllowed = (transaction.amount - transaction.partialPaidAmount).coerceAtLeast(0.0)
-            if (maxAllowed <= 0.0) return  // already fully paid
+            if (maxAllowed <= 0.0) return
             val safeAmount = parsedAmount.coerceAtMost(maxAllowed)
+            // Optimistic update
+            optimisticallyUpdateTransaction(transactionId) { old ->
+                old.copy(partialPaidAmount = old.partialPaidAmount + safeAmount)
+            }
             viewModelScope.launch {
                 repository.addPartialPayment(
                     transactionId = transactionId,
@@ -588,7 +752,6 @@ class MainViewModel(
                 )
             }
         } else {
-            // Transaction not in cache yet — write as-is (Firestore increment is safe)
             viewModelScope.launch {
                 repository.addPartialPayment(
                     transactionId = transactionId,
@@ -600,11 +763,16 @@ class MainViewModel(
     }
 
     fun toggleTransactionSettled(transactionId: String, isSettled: Boolean) {
+        val settledDate = if (isSettled) LocalDate.now().toString() else ""
+        // Optimistic update
+        optimisticallyUpdateTransaction(transactionId) { old ->
+            old.copy(isSettled = isSettled, settledDate = settledDate)
+        }
         viewModelScope.launch {
             repository.toggleTransactionSettled(
                 transactionId = transactionId,
                 isSettled = isSettled,
-                settledDate = if (isSettled) LocalDate.now().toString() else ""
+                settledDate = settledDate
             )
         }
     }
@@ -743,9 +911,52 @@ class MainViewModel(
 
     // ── Savings ───────────────────────────────────────────────────────────────
 
+    private fun optimisticallyAddSavingsEntry(entry: com.radafiq.data.models.SavingsEntry) {
+        _customers.value = _customers.value.map { customer ->
+            if (customer.id != entry.customerId) return@map customer
+            val newEntries = customer.savingsEntries + entry
+            val sortedEntries = newEntries.sortedByDescending { it.date }
+            val newBalance = sortedEntries.sumOf {
+                if (it.type == com.radafiq.data.models.SavingsType.DEPOSIT) it.amount else -it.amount
+            }.coerceAtLeast(0.0)
+            customer.copy(
+                savingsEntries = sortedEntries,
+                savingsBalance = newBalance,
+                snapshotVersion = customer.snapshotVersion + 1
+            )
+        }
+    }
+
+    private fun optimisticallyDeleteSavingsEntry(entryId: String) {
+        _customers.value = _customers.value.map { customer ->
+            val newEntries = customer.savingsEntries.filter { it.id != entryId }
+            if (newEntries.size == customer.savingsEntries.size) return@map customer
+            val newBalance = newEntries.sumOf {
+                if (it.type == com.radafiq.data.models.SavingsType.DEPOSIT) it.amount else -it.amount
+            }.coerceAtLeast(0.0)
+            customer.copy(
+                savingsEntries = newEntries.sortedByDescending { it.date },
+                savingsBalance = newBalance,
+                snapshotVersion = customer.snapshotVersion + 1
+            )
+        }
+    }
+
     fun addSavingsDeposit(customerId: String, customerName: String, amount: String, note: String, bankAccountId: String = "", bankAccountName: String = "") {
         val parsed = amount.toDoubleOrNull() ?: return
         if (parsed <= 0.0) return
+        val tempEntry = com.radafiq.data.models.SavingsEntry(
+            id = "optimistic_savings_${System.currentTimeMillis()}",
+            customerId = customerId,
+            customerName = customerName,
+            amount = parsed,
+            type = com.radafiq.data.models.SavingsType.DEPOSIT,
+            note = note.trim(),
+            date = LocalDate.now().toString(),
+            bankAccountId = bankAccountId,
+            bankAccountName = bankAccountName
+        )
+        optimisticallyAddSavingsEntry(tempEntry)
         viewModelScope.launch {
             repository.addSavingsEntry(
                 customerId = customerId,
@@ -763,6 +974,16 @@ class MainViewModel(
     fun addSavingsWithdrawal(customerId: String, customerName: String, amount: String, note: String) {
         val parsed = amount.toDoubleOrNull() ?: return
         if (parsed <= 0.0) return
+        val tempEntry = com.radafiq.data.models.SavingsEntry(
+            id = "optimistic_savings_${System.currentTimeMillis()}",
+            customerId = customerId,
+            customerName = customerName,
+            amount = parsed,
+            type = com.radafiq.data.models.SavingsType.WITHDRAWAL,
+            note = note.trim(),
+            date = LocalDate.now().toString()
+        )
+        optimisticallyAddSavingsEntry(tempEntry)
         viewModelScope.launch {
             repository.addSavingsEntry(
                 customerId = customerId,
@@ -776,6 +997,9 @@ class MainViewModel(
     }
 
     fun deleteSavingsEntry(entryId: String) {
+        if (!entryId.startsWith("optimistic_savings_")) {
+            optimisticallyDeleteSavingsEntry(entryId)
+        }
         viewModelScope.launch { repository.deleteSavingsEntry(entryId) }
     }
 

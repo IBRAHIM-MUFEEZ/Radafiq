@@ -4,6 +4,7 @@ import {
   addDoc,
   setDoc,
   deleteDoc,
+  getDoc,
   getDocs,
   onSnapshot,
   writeBatch,
@@ -12,6 +13,7 @@ import {
   deleteField,
   query,
   where,
+  orderBy,
   Unsubscribe,
   DocumentSnapshot,
   QuerySnapshot,
@@ -23,6 +25,7 @@ import {
   CustomerSummary,
   CustomerTransaction,
   SavingsEntry,
+  SettlementHistoryEntry,
   FirestoreBackupPayload,
   BackupRecord,
   accountKindFromStorage,
@@ -56,6 +59,10 @@ function savingsCol(uid: string) {
   return collection(db, 'users', uid, 'savings');
 }
 
+function settlementHistoryCol(uid: string, transactionId: string) {
+  return collection(db, 'users', uid, 'transactions', transactionId, 'settlementHistory');
+}
+
 function profileDoc(uid: string) {
   return doc(db, 'users', uid, 'profile', 'main');
 }
@@ -73,7 +80,10 @@ export async function saveSecurityToCloud(uid: string, data: {
   recoveryQuestion: string;
   recoveryAnswerHash: string;
 }): Promise<void> {
-  await deleteDoc(securityDoc(uid));
+  await setDoc(securityDoc(uid), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function loadSecurityFromCloud(uid: string): Promise<{
@@ -83,8 +93,16 @@ export async function loadSecurityFromCloud(uid: string): Promise<{
   recoveryQuestion: string;
   recoveryAnswerHash: string;
 } | null> {
-  await deleteDoc(securityDoc(uid));
-  return null;
+  const snap = await getDoc(securityDoc(uid));
+  if (!snap.exists()) return null;
+  const d = snap.data();
+  return {
+    passcodeHash: (d.passcodeHash as string) ?? '',
+    passcodeSalt: (d.passcodeSalt as string) ?? '',
+    lockEnabled: (d.lockEnabled as boolean) ?? false,
+    recoveryQuestion: (d.recoveryQuestion as string) ?? '',
+    recoveryAnswerHash: (d.recoveryAnswerHash as string) ?? '',
+  };
 }
 
 export async function clearSecurityFromCloud(uid: string): Promise<void> {
@@ -547,14 +565,37 @@ export async function deleteTransaction(uid: string, transactionId: string): Pro
 }
 
 export async function addPartialPayment(uid: string, transactionId: string, amount: number, date: string): Promise<void> {
+  // Fetch current state before updating
+  const currentSnap = await getDoc(doc(transactionsCol(uid), transactionId));
+  const currentData = currentSnap.data() ?? {};
+  const previousPartialPaid = (currentData.partialPaidAmount as number) ?? 0;
+
   await setDoc(
     doc(transactionsCol(uid), transactionId),
     { partialPaidAmount: increment(amount), lastPartialPaymentDate: date },
     { merge: true }
   );
+
+  // Record partial payment history
+  await recordSettlementHistory(uid, {
+    transactionId,
+    customerId: (currentData.customerId as string) ?? '',
+    type: 'partial',
+    amount,
+    previousPartialPaid,
+    newPartialPaid: previousPartialPaid + amount,
+    previousIsSettled: (currentData.isSettled as boolean) ?? false,
+    newIsSettled: false,
+    date,
+  });
 }
 
 export async function toggleTransactionSettled(uid: string, transactionId: string, isSettled: boolean, settledDate: string): Promise<void> {
+  // Fetch current transaction state before updating
+  const currentSnap = await getDoc(doc(transactionsCol(uid), transactionId));
+  const currentData = currentSnap.data() ?? {};
+  const previousPartialPaid = (currentData.partialPaidAmount as number) ?? 0;
+
   await setDoc(
     doc(transactionsCol(uid), transactionId),
     {
@@ -563,6 +604,98 @@ export async function toggleTransactionSettled(uid: string, transactionId: strin
     },
     { merge: true }
   );
+
+  // When marking as unpaid, remove any previous 'settled' entries
+  // so a mistaken "Mark as Paid" is erased rather than stacked.
+  if (!isSettled) {
+    const historySnap = await getDocs(
+      query(settlementHistoryCol(uid, transactionId), where('type', '==', 'settled'))
+    );
+    const deletes = historySnap.docs.map(d => deleteDoc(doc(settlementHistoryCol(uid, transactionId), d.id)));
+    await Promise.all(deletes);
+  }
+
+  // Record settlement history
+  await recordSettlementHistory(uid, {
+    transactionId,
+    customerId: (currentData.customerId as string) ?? '',
+    type: isSettled ? 'settled' : 'unsettled',
+    amount: (currentData.amount as number) ?? 0,
+    previousPartialPaid,
+    newPartialPaid: previousPartialPaid,
+    previousIsSettled: !isSettled,
+    newIsSettled: isSettled,
+    date: isSettled ? settledDate : new Date().toISOString().split('T')[0],
+  });
+}
+
+// ── Settlement History ─────────────────────────────────────────────────────────
+
+export async function recordSettlementHistory(
+  uid: string,
+  params: {
+    transactionId: string;
+    customerId: string;
+    type: 'settled' | 'partial' | 'unsettled';
+    amount: number;
+    previousPartialPaid: number;
+    newPartialPaid: number;
+    previousIsSettled: boolean;
+    newIsSettled: boolean;
+    date: string;
+  }
+): Promise<void> {
+  await addDoc(settlementHistoryCol(uid, params.transactionId), {
+    transactionId: params.transactionId,
+    customerId: params.customerId,
+    type: params.type,
+    amount: params.amount,
+    previousPartialPaid: params.previousPartialPaid,
+    newPartialPaid: params.newPartialPaid,
+    previousIsSettled: params.previousIsSettled,
+    newIsSettled: params.newIsSettled,
+    date: params.date,
+    timestamp: serverTimestamp(),
+  });
+}
+
+export async function getSettlementHistory(uid: string, transactionId: string): Promise<SettlementHistoryEntry[]> {
+  const snapshot = await getDocs(
+    query(settlementHistoryCol(uid, transactionId), orderBy('timestamp', 'asc'))
+  );
+  return snapshot.docs.map(d => {
+    const data = d.data();
+    const ts = data.timestamp as { toMillis?: () => number; seconds?: number; nanoseconds?: number } | null;
+    return {
+      id: d.id,
+      transactionId: (data.transactionId as string) ?? '',
+      customerId: (data.customerId as string) ?? '',
+      type: (data.type as 'settled' | 'partial' | 'unsettled') ?? 'settled',
+      amount: (data.amount as number) ?? 0,
+      previousPartialPaid: (data.previousPartialPaid as number) ?? 0,
+      newPartialPaid: (data.newPartialPaid as number) ?? 0,
+      previousIsSettled: (data.previousIsSettled as boolean) ?? false,
+      newIsSettled: (data.newIsSettled as boolean) ?? false,
+      date: (data.date as string) ?? '',
+      timestamp: ts?.toMillis?.() ?? (ts?.seconds ?? 0) * 1000,
+    };
+  });
+}
+
+export async function getAllSettlementHistory(
+  uid: string,
+  transactions: { id: string; name: string }[]
+): Promise<(SettlementHistoryEntry & { transactionName: string })[]> {
+  const results = await Promise.all(
+    transactions.map(t => getSettlementHistory(uid, t.id))
+  );
+  const entries: (SettlementHistoryEntry & { transactionName: string })[] = [];
+  for (let i = 0; i < transactions.length; i++) {
+    for (const h of results[i]) {
+      entries.push({ ...h, transactionName: transactions[i].name });
+    }
+  }
+  return entries.sort((a, b) => b.timestamp - a.timestamp);
 }
 
 // ── Account CRUD ──────────────────────────────────────────────────────────────

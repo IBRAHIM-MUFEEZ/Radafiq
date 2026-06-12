@@ -70,7 +70,8 @@ fun ProfileSetupScreen(
     onSave: (displayName: String, businessName: String, email: String, photoUrl: String) -> Unit,
     onSignInWithGoogle: (() -> Unit)? = null,
     googleSignInInProgress: Boolean = false,
-    loginRestoreInProgress: Boolean = false
+    loginRestoreInProgress: Boolean = false,
+    signInErrorMessage: String = ""
 ) {
     var displayName by remember(profile?.displayName) { mutableStateOf(profile?.displayName.orEmpty()) }
     var businessName by remember(profile?.businessName) { mutableStateOf(profile?.businessName.orEmpty()) }
@@ -167,6 +168,16 @@ fun ProfileSetupScreen(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(if (googleSignInInProgress) "Signing in..." else "Continue with Google")
+                            }
+                            // Show sign-in error beneath the button so the user knows what went wrong
+                            if (signInErrorMessage.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = signInErrorMessage,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
                         }
                     }
