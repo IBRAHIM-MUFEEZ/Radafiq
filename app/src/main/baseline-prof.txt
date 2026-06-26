@@ -1,0 +1,67 @@
+# Baseline Profile for Radafiq — pre-compiles critical startup code paths
+# Format: HSPL = Hot Startup Pattern List (methods AOT-compiled on install)
+#         HSP = Hot Startup Pattern (all methods in class/class hierarchy)
+#
+# Generated manually from startup trace analysis. Covers:
+#   - Activity & ViewModel initialization
+#   - Repository & Firestore setup
+#   - Compose first-frame rendering
+#   - Theme and navigation setup
+#   - Splash screen / shimmer
+
+# ── Entry point ──────────────────────────────────────────────
+HSPLcom/radafiq/MainActivity;->onCreate(Landroid/os/Bundle;)V
+HSPLcom/radafiq/MainActivity;->access$superOnCreate(Landroid/os/Bundle;)V
+HSPLcom/radafiq/MainActivity;->requestNotificationPermissionIfNeeded()V
+
+# ── ViewModel ────────────────────────────────────────────────
+HSPLcom/radafiq/viewmodel/MainViewModel;-><init>()V
+HSPLcom/radafiq/viewmodel/MainViewModel;->startListening()V
+HSPLcom/radafiq/viewmodel/MainViewModel;->handleObservedAppData(Lcom/radafiq/data/models/AppData;)V
+HSPLcom/radafiq/viewmodel/MainViewModel;->reinitialize()V
+HSPLcom/radafiq/viewmodel/MainViewModel;->initAutoBackup(Landroid/content/Context;Lcom/radafiq/data/profile/UserProfileRepository;Lcom/radafiq/data/settings/AppSettingsRepository;Lcom/radafiq/data/security/AppSecurityRepository;)V
+
+# ── Firebase / Firestore ─────────────────────────────────────
+HSPLcom/radafiq/data/repository/FirebaseRepository;-><init>()V
+HSPLcom/radafiq/data/repository/FirebaseRepository;->listenAllData(Lkotlin/jvm/functions/Function1;)Ljava/util/List;
+HSPLcom/radafiq/data/repository/FirebaseRepository;->userRoot()Lcom/google/firebase/firestore/DocumentReference;
+HSPLcom/radafiq/data/repository/FirebaseRepository;->customersRef()Lcom/google/firebase/firestore/CollectionReference;
+HSPLcom/radafiq/data/repository/FirebaseRepository;->accountsRef()Lcom/google/firebase/firestore/CollectionReference;
+HSPLcom/google/firebase/firestore/FirebaseFirestore;->getInstance()Lcom/google/firebase/firestore/FirebaseFirestore;
+
+# ── Security & Auth ──────────────────────────────────────────
+HSPLcom/radafiq/data/security/AppSecurityRepository;-><init>(Landroid/content/Context;)V
+HSPLcom/radafiq/data/security/AppSecurityRepository;->loadState()V
+HSPLcom/radafiq/data/auth/LocalIdentityRepository;->userId()Ljava/lang/String;
+HSPLcom/radafiq/data/settings/AppSettingsRepository;-><init>(Landroid/content/Context;)V
+HSPLcom/radafiq/data/profile/UserProfileRepository;-><init>()V
+HSPLcom/radafiq/data/profile/UserProfileRepository;->observeCurrentUserProfile()V
+
+# ── UI: Theme ────────────────────────────────────────────────
+HSPLcom/radafiq/ui/RadafiqThemeKt;->RadafiqTheme(ZLkotlin/jvm/functions/Function2;)V
+HSPLcom/radafiq/ui/RadafiqThemeKt;->RadafiqBackground(Lkotlin/jvm/functions/Function2;Landroidx/compose/runtime/Composer;I)V
+HSPLcom/radafiq/ui/RadafiqThemeKt;->access$asComposeColor(I)J
+
+# ── UI: Shimmer Loading ──────────────────────────────────────
+HSPLcom/radafiq/ui/ShimmerLoadingScreenKt;->ShimmerLoadingScreen(JLandroidx/compose/ui/Modifier;Landroidx/compose/runtime/Composer;II)V
+HSPLcom/radafiq/ui/ShimmerLoadingScreenKt;->ShimmerBlock(Landroidx/compose/ui/Modifier;FLandroidx/compose/ui/graphics/Brush;Landroidx/compose/foundation/shape/RoundedCornerShape;Landroidx/compose/runtime/Composer;II)V
+
+# ── UI: Dashboard / Home ─────────────────────────────────────
+HSPLcom/radafiq/ui/DashboardScreenKt;->DashboardScreen(Landroidx/navigation/NavController;Landroidx/compose/runtime/Composer;I)V
+HSPLcom/radafiq/ui/DashboardScreenKt;->HomeScreen(Landroidx/compose/runtime/Composer;I)V
+
+# ── UI: Lock / Security gate ─────────────────────────────────
+HSPLcom/radafiq/ui/SecureAppScreensKt;->AppLockScreen(ZLandroidx/compose/runtime/Composer;I)V
+
+# ── Compose framework (key first-frame paths) ────────────────
+HSPLandroidx/compose/runtime/ComposerImpl;->composeContent(Landroidx/compose/runtime/Composable;Z)V
+HSPLandroidx/compose/ui/platform/AndroidComposeView;-><init>(Landroid/content/Context;Landroid/util/AttributeSet;)V
+HSPLandroidx/compose/material3/ScaffoldKt;->Scaffold(Landroidx/compose/ui/Modifier;Landroidx/compose/material3/ScaffoldDefaults;Lkotlin/jvm/functions/Function3;Landroidx/compose/runtime/Composer;II)V
+HSPLandroidx/compose/animation/AnimatedContentKt;->AnimatedContent(Ljava/lang/Object;Landroidx/compose/ui/Modifier;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function2;Landroidx/compose/runtime/Composer;II)V
+
+# ── Navigation ────────────────────────────────────────────────
+HSPLandroidx/navigation/compose/NavHostKt;->NavHost(Landroidx/navigation/NavController;Ljava/lang/String;Landroidx/navigation/NavOptions;Lkotlin/jvm/functions/Function1;Landroidx/compose/runtime/Composer;II)V
+
+# ── Coroutines ───────────────────────────────────────────────
+HSPLorg/jetbrains/kotlinx/coroutines/flow/StateFlowImpl;->getValue()Ljava/lang/Object;
+HSPLorg/jetbrains/kotlinx/coroutines/flow/StateFlowImpl;->setValue(Ljava/lang/Object;)V

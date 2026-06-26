@@ -23,6 +23,19 @@ web-app/.env.local
 # Firebase Admin service account key — NEVER commit this
 web-app/serviceAccountKey.json
 
+# Claude Code local config (per-project settings, memory, plans)
+.claude/
+.opencode/
+
+# Session artifacts
+diff_*.txt
+gradle_err.txt
+gradle_out.txt
+prompt.txt
+
+# Separate unrelated project (Open Design)
+open-design/
+
 # Release signing keystore — NEVER commit this
 *.jks
 *.keystore

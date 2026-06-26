@@ -1,6 +1,9 @@
 package com.radafiq.ui
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -17,7 +20,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -27,8 +29,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -42,13 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -363,7 +361,8 @@ fun SecuritySetupScreen(
                     Switch(
                         checked = useBiometric && biometricAvailable,
                         onCheckedChange = { useBiometric = it },
-                        enabled = biometricAvailable
+                        enabled = biometricAvailable,
+                        colors = radafiqSwitchColors()
                     )
                 }
 
@@ -537,7 +536,8 @@ fun ChangePasscodeScreen(
                     Switch(
                         checked = useBiometric && biometricAvailable,
                         onCheckedChange = { useBiometric = it },
-                        enabled = biometricAvailable
+                        enabled = biometricAvailable,
+                        colors = radafiqSwitchColors()
                     )
                 }
 
@@ -609,8 +609,6 @@ fun AppLockScreen(
     val recoveryAvailable = recoveryQuestion.isNotBlank() && onResetWithRecovery != null
     val recoveryPasscodesMatch = newPasscode.length == 6 && newPasscode == confirmNewPasscode
     val canUseBiometric = biometricEnabled && biometricAvailable && onUnlockWithBiometric != null
-    val keyboardController = LocalSoftwareKeyboardController.current
-    val focusManager = LocalFocusManager.current
 
     // Auto-trigger biometric on first composition
     LaunchedEffect(Unit) {
@@ -633,14 +631,6 @@ fun AppLockScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .clickable(
-                    enabled = showPinEntry && !showRecoveryFlow,
-                    indication = null,
-                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                ) {
-                    focusManager.clearFocus(force = true)
-                    keyboardController?.hide()
-                }
                 .padding(16.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
@@ -650,15 +640,16 @@ fun AppLockScreen(
                 model = "file:///android_asset/logo-Photoroom.png",
                 contentDescription = "Radafiq Logo",
                 modifier = Modifier
-                    .size(112.dp),
+                    .size(96.dp),
                 contentScale = androidx.compose.ui.layout.ContentScale.Fit
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "Radafiq Locked",
-                style = MaterialTheme.typography.headlineSmall,
+                text = "Radafiq",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground
             )
             Text(
@@ -667,19 +658,19 @@ fun AppLockScreen(
                 } else if (!showPinEntry && canUseBiometric) {
                     "Verify with biometrics to continue."
                 } else {
-                    "Enter your passcode to continue."
+                    "Enter passcode to continue."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
+                modifier = Modifier.padding(top = 4.dp, bottom = 24.dp)
             )
 
-            FlowCard(
-                accentColor = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (showRecoveryFlow) {
+            if (showRecoveryFlow) {
+                FlowCard(
+                    accentColor = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text(
                         text = recoveryQuestion,
                         style = MaterialTheme.typography.bodyMedium,
@@ -742,7 +733,8 @@ fun AppLockScreen(
                             }
                             Switch(
                                 checked = useBiometric,
-                                onCheckedChange = { useBiometric = it }
+                                onCheckedChange = { useBiometric = it },
+                                colors = radafiqSwitchColors()
                             )
                         }
                     }
@@ -782,7 +774,8 @@ fun AppLockScreen(
                     ) {
                         Text("Back to Unlock")
                     }
-                } else {
+                }
+            } else {
                     if (!showPinEntry && canUseBiometric) {
                         // Biometric pending — show fingerprint icon + option to use PIN instead
                         Spacer(modifier = Modifier.height(8.dp))
@@ -817,124 +810,139 @@ fun AppLockScreen(
                             Text("Use PIN instead")
                         }
                     } else {
-                        // PIN entry
-                        val focusRequester = remember { FocusRequester() }
-
-                        LaunchedEffect(showPinEntry) {
-                            if (showPinEntry) {
-                                try {
-                                    focusRequester.requestFocus()
-                                    keyboardController?.show()
-                                } catch (_: Exception) {}
-                            }
-                        }
-
+                        // PIN entry with number pad
                         LaunchedEffect(passcode) {
                             if (passcode.length == 6) {
                                 val unlocked = onUnlockWithPasscode(passcode)
                                 if (!unlocked && passcode.length == 6) {
-                                    // FIX-2: Show lockout message if the account is locked out
                                     localError = "Incorrect passcode."
                                     passcode = ""
                                 }
                             }
                         }
 
-                        // Invisible BasicTextField — 1.dp so it stays in layout tree, alpha 0 so it's hidden
-                        BasicTextField(
-                            value = passcode,
-                            onValueChange = {
-                                passcode = it.filter { c -> c.isDigit() }.take(6)
-                                localError = ""
-                            },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                            modifier = Modifier
-                                .size(1.dp)
-                                .alpha(0f)
-                                .focusRequester(focusRequester)
-                        )
-
-                        // Clickable bullet dots — tap to re-focus and show keyboard
-                        // Tap anywhere outside dots hides keyboard
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(
-                                    indication = null,
-                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                                ) {
-                                    keyboardController?.hide()
-                                }
-                                .padding(vertical = 16.dp),
-                            contentAlignment = Alignment.Center
+                        // Passcode dots
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                repeat(6) { index ->
-                                    Box(
-                                        modifier = Modifier
-                                            .padding(horizontal = 10.dp)
-                                            .size(16.dp)
-                                            .clickable(
-                                                indication = null,
-                                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                                            ) {
-                                                try {
-                                                    focusRequester.requestFocus()
-                                                    keyboardController?.show()
-                                                } catch (_: Exception) {}
-                                            }
-                                            .background(
-                                                color = if (index < passcode.length)
-                                                    MaterialTheme.colorScheme.primary
-                                                else
-                                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                                                shape = CircleShape
-                                            )
-                                    )
-                                }
-                            }
-                        }
-
-                        if (canUseBiometric) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Fingerprint,
-                                    contentDescription = "Use biometrics",
+                            repeat(6) { index ->
+                                Box(
                                     modifier = Modifier
-                                        .size(40.dp)
-                                        .clickable(
-                                            indication = null,
-                                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                                        ) {
-                                            passcode = ""
-                                            localError = ""
-                                            onUnlockWithBiometric?.invoke()
-                                        },
-                                    tint = MaterialTheme.colorScheme.primary
+                                        .padding(horizontal = 10.dp)
+                                        .size(14.dp)
+                                        .background(
+                                            color = if (index < passcode.length)
+                                                MaterialTheme.colorScheme.primary
+                                            else
+                                                MaterialTheme.colorScheme.outline.copy(alpha = 0.30f),
+                                            shape = CircleShape
+                                        )
                                 )
                             }
                         }
-                    }
 
-                    if (recoveryAvailable) {
-                        TextButton(
-                            onClick = {
-                                showRecoveryFlow = true
-                                localError = ""
-                            },
-                            modifier = Modifier.fillMaxWidth()
+                        // Number pad
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Text("Forgot Passcode?")
+                            val numberRows = listOf(
+                                listOf("1", "2", "3"),
+                                listOf("4", "5", "6"),
+                                listOf("7", "8", "9"),
+                            )
+                            numberRows.forEach { row ->
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    row.forEach { digit ->
+                                        NumberPadKey(
+                                            digit = digit,
+                                            onClick = {
+                                                if (passcode.length < 6) {
+                                                    passcode += digit
+                                                    localError = ""
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                            // Bottom row: biometric | 0 | backspace
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Biometric button
+                                Box(
+                                    modifier = Modifier.size(72.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (canUseBiometric) {
+                                        IconButton(
+                                            onClick = {
+                                                passcode = ""
+                                                localError = ""
+                                                onUnlockWithBiometric?.invoke()
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Fingerprint,
+                                                contentDescription = "Use biometrics",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(32.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                NumberPadKey(
+                                    digit = "0",
+                                    onClick = {
+                                        if (passcode.length < 6) {
+                                            passcode += "0"
+                                            localError = ""
+                                        }
+                                    }
+                                )
+                                // Backspace
+                                Box(
+                                    modifier = Modifier.size(72.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    IconButton(
+                                        onClick = {
+                                            if (passcode.isNotEmpty()) {
+                                                passcode = passcode.dropLast(1)
+                                                localError = ""
+                                            }
+                                        },
+                                        enabled = passcode.isNotEmpty()
+                                    ) {
+                                        Text(
+                                            text = "⌫",
+                                            style = MaterialTheme.typography.titleLarge,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (recoveryAvailable) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            TextButton(
+                                onClick = {
+                                    showRecoveryFlow = true
+                                    localError = ""
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Forgot Passcode?")
+                            }
                         }
                     }
                 }
@@ -953,7 +961,6 @@ fun AppLockScreen(
             }
         }
     }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -978,7 +985,7 @@ private fun RecoveryQuestionDropdown(
             label = { Text("Recovery Question") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
-                .menuAnchor()
+                .menuAnchor(type = MenuAnchorType.PrimaryNotEditable, enabled = true)
                 .fillMaxWidth()
         )
 
@@ -996,5 +1003,41 @@ private fun RecoveryQuestionDropdown(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun NumberPadKey(
+    digit: String,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val bgAlpha by animateFloatAsState(
+        targetValue = if (isPressed) 1f else 0f,
+        animationSpec = tween(100),
+        label = "numpad-bg"
+    )
+
+    Box(
+        modifier = Modifier
+            .size(72.dp)
+            .clip(CircleShape)
+            .background(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isPressed) 0.60f else 0f)
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = digit,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
     }
 }

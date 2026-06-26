@@ -2,6 +2,10 @@ package com.radafiq.ui
 
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -10,7 +14,6 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,9 +21,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,13 +41,13 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material.icons.filled.SouthWest
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -60,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -75,6 +81,7 @@ import com.radafiq.data.security.AppSecurityState
 import com.radafiq.data.settings.AppSettingsState
 import com.radafiq.data.settings.AppThemeMode
 import com.radafiq.viewmodel.MainViewModel
+import com.radafiq.viewmodel.PersonSummary
 import java.time.LocalDate
 import java.time.LocalTime
 
@@ -85,15 +92,16 @@ enum class DashboardTab {
 private data class DashboardTabItem(
     val tab: DashboardTab,
     val label: String,
-    val icon: ImageVector
+    val icon: ImageVector? = null,
+    val isProfilePhoto: Boolean = false
 )
 
 private val DashboardTabs = listOf(
-    DashboardTabItem(DashboardTab.HOME, "Home", Icons.Default.Home),
-    DashboardTabItem(DashboardTab.ACCOUNTS, "Accounts", Icons.Default.CreditCard),
-    DashboardTabItem(DashboardTab.CUSTOMERS, "Customers", Icons.Default.AccountBox),
-    DashboardTabItem(DashboardTab.EMI_SCHEDULE, "EMI", Icons.Default.CalendarMonth),
-    DashboardTabItem(DashboardTab.SETTINGS, "Settings", Icons.Default.Settings)
+    DashboardTabItem(DashboardTab.HOME, "Home", icon = Icons.Default.Home),
+    DashboardTabItem(DashboardTab.ACCOUNTS, "Accounts", icon = Icons.Default.CreditCard),
+    DashboardTabItem(DashboardTab.CUSTOMERS, "Customers", icon = Icons.Default.AccountBox),
+    DashboardTabItem(DashboardTab.EMI_SCHEDULE, "EMI", icon = Icons.Default.CalendarMonth),
+    DashboardTabItem(DashboardTab.SETTINGS, "Settings", isProfilePhoto = true)
 )
 
 @Composable
@@ -124,6 +132,7 @@ fun DashboardScreen(
     isDriveOperationInProgress: Boolean,
     driveBackupStatusMessage: String,
     onLogout: () -> Unit,
+    onLock: () -> Unit = {},
     onOpenCustomer: (String) -> Unit = {},
     onOpenAccount: (String) -> Unit = {}
 ) {
@@ -146,7 +155,9 @@ fun DashboardScreen(
             bottomBar = {
                 DashboardBottomBar(
                     currentScreen = currentScreen,
-                    onTabSelected = { currentScreen = it }
+                    onTabSelected = { currentScreen = it },
+                    photoUrl = photoUrl,
+                    profileName = profileName
                 )
             }
         ) { padding ->
@@ -216,6 +227,7 @@ fun DashboardScreen(
                     isDriveOperationInProgress = isDriveOperationInProgress,
                     driveBackupStatusMessage = driveBackupStatusMessage,
                     onLogout = onLogout,
+                    onLock = onLock,
                     modifier = Modifier.padding(padding)
                 )
             }
@@ -227,11 +239,22 @@ fun DashboardScreen(
 @Composable
 private fun DashboardBottomBar(
     currentScreen: DashboardTab,
-    onTabSelected: (DashboardTab) -> Unit
+    onTabSelected: (DashboardTab) -> Unit,
+    photoUrl: String,
+    profileName: String
 ) {
     val useDarkTheme = LocalRadafiqDarkTheme.current
-    val bgColor = if (useDarkTheme) Color(0xFF1A1A35) else MaterialTheme.colorScheme.surface.copy(alpha = 0.74f)
-    val borderColor = if (useDarkTheme) Color(0xFF3A3A6A).copy(alpha = 0.5f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+    val bgColor = if (useDarkTheme) Color(0xFF1A1A24) else Color.White
+
+    val resolvedProfileName = profileName.trim().ifBlank { "You" }
+    val initials = remember(resolvedProfileName) {
+        resolvedProfileName
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+            .take(2)
+            .joinToString(separator = "") { it.first().uppercaseChar().toString() }
+            .ifBlank { "RA" }
+    }
 
     Box(
         modifier = Modifier
@@ -241,44 +264,75 @@ private fun DashboardBottomBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp, bottomStart = 24.dp, bottomEnd = 24.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(bgColor)
-                .border(
-                    width = 1.dp,
-                    color = borderColor,
-                    shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp, bottomStart = 24.dp, bottomEnd = 24.dp)
-                )
-                .padding(horizontal = 8.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             DashboardTabs.forEach { item ->
                 val selected = currentScreen == item.tab
-                val containerColor = if (selected) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                } else {
-                    Color.Transparent
-                }
-                val contentColor = if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
+                val containerColor by animateColorAsState(
+                    targetValue = if (selected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        Color.Transparent
+                    },
+                    label = "tab-bg"
+                )
+                val contentColor by animateColorAsState(
+                    targetValue = if (selected) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    label = "tab-fg"
+                )
 
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(18.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(containerColor)
-                        .clickable { onTabSelected(item.tab) }
+                        .bounceClick { onTabSelected(item.tab) }
                         .padding(vertical = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    Icon(
-                        imageVector = item.icon,
-                        contentDescription = item.label,
-                        tint = contentColor
-                    )
+                    if (item.isProfilePhoto) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (photoUrl.isNotBlank()) {
+                                AsyncImage(
+                                    model = photoUrl,
+                                    contentDescription = "Profile",
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(CircleShape),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Text(
+                                    text = initials,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    } else {
+                        Icon(
+                            imageVector = item.icon!!,
+                            contentDescription = item.label,
+                            tint = contentColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                     Text(
                         text = item.label,
                         style = MaterialTheme.typography.labelSmall,
@@ -291,13 +345,6 @@ private fun DashboardBottomBar(
     }
 }
 
-// Lightweight summary for a person (aggregated from customer transactions)
-private data class PersonSummary(
-    val personId: String,
-    val personName: String,
-    val totalUsed: Double,
-    val totalDue: Double
-)
 
 @Composable
 fun HomeScreen(
@@ -306,74 +353,16 @@ fun HomeScreen(
     photoUrl: String,
     modifier: Modifier = Modifier
 ) {
-    val cards by vm.cards.collectAsState()
-    val customers by vm.customers.collectAsState()
+    val aggregates by vm.aggregates.collectAsState()
     val driveOperationMessage by vm.driveOperationMessage.collectAsState()
 
-    val snapshotKey = customers.sumOf { it.snapshotVersion }
-    val usedAccountIds = remember(snapshotKey) {
-        val set = mutableSetOf<String>()
-        customers.forEach { c -> c.transactions.forEach { set.add(it.accountId) } }
-        set
-    }
-    val visibleCards = remember(cards, usedAccountIds) {
-        if (usedAccountIds.isEmpty()) emptyList()
-        else cards.filter { it.id in usedAccountIds }
-    }
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+    val visibleCards = aggregates.visibleCards
+    val cardTotals = aggregates.cardTotals
+    val customerAgg = aggregates.customerAgg
+    val availableKinds = aggregates.availableKinds
+    val savingsCustomers = aggregates.savingsCustomers
 
-    data class CardTotals(val used: Double, val paid: Double, val balance: Double)
-    val cardTotals = remember(visibleCards) {
-        var u = 0.0; var p = 0.0; var b = 0.0
-        for (c in visibleCards) { u += c.bill; p += (c.bill - c.payable).coerceAtLeast(0.0); b += c.payable }
-        CardTotals(u, p, b)
-    }
-
-    data class CustomerAgg(
-        val emiOutstandingByAccount: Map<String, Double>,
-        val nonEmiDueByAccount: Map<String, Double>,
-        val personSummaries: List<PersonSummary>
-    )
-    val customerAgg = remember(snapshotKey) {
-        val emiMap = mutableMapOf<String, Double>()
-        val nonEmiMap = mutableMapOf<String, Double>()
-        val personMap = linkedMapOf<String, Triple<String, Double, Double>>()
-        customers.forEach { customer ->
-            customer.transactions.forEach { t ->
-                if (t.accountKind == AccountKind.PERSON) {
-                    if (t.isVisibleInTransactions()) {
-                        val key = t.accountId
-                        val name = t.personName.ifBlank { t.accountName }
-                        val used = t.amount
-                        val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
-                        val existing = personMap[key]
-                        personMap[key] = if (existing == null) Triple(name, used, due)
-                            else Triple(existing.first, existing.second + used, existing.third + due)
-                    }
-                } else if (!t.isEmi) {
-                    if (t.isVisibleInTransactions()) {
-                        val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
-                        if (due > 0.0) nonEmiMap[t.accountId] = (nonEmiMap[t.accountId] ?: 0.0) + due
-                    }
-                } else {
-                    val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
-                    if (due > 0.0) emiMap[t.accountId] = (emiMap[t.accountId] ?: 0.0) + due
-                }
-            }
-        }
-        CustomerAgg(
-            emiOutstandingByAccount = emiMap,
-            nonEmiDueByAccount = nonEmiMap,
-            personSummaries = personMap.entries
-                .map { (id, v) -> PersonSummary(id, v.first, v.second, v.third) }
-                .sortedByDescending { it.totalDue }
-        )
-    }
-
-    val availableKinds = remember(snapshotKey) {
-        val kinds = visibleCards.map { it.accountKind }.toMutableList()
-        if (customerAgg.personSummaries.isNotEmpty() && AccountKind.PERSON !in kinds) kinds.add(AccountKind.PERSON)
-        kinds.distinct()
-    }
     var selectedActivityKindName by rememberSaveable { mutableStateOf("ALL") }
     var isFilterOpen by rememberSaveable { mutableStateOf(false) }
 
@@ -387,12 +376,6 @@ fun HomeScreen(
         else -> emptyList()
     }
 
-    // Compute savings list before LazyColumn (remember must be called at composable scope)
-    val savingsCustomers = remember(snapshotKey) {
-        customers.filter { it.savingsBalance > 0.0 }
-            .sortedByDescending { it.savingsBalance }
-    }
-
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -402,8 +385,7 @@ fun HomeScreen(
     ) {
         item {
             HomeGreetingHeader(
-                profileName = profileName,
-                photoUrl = photoUrl
+                profileName = profileName
             )
         }
 
@@ -423,55 +405,53 @@ fun HomeScreen(
         }
 
         item {
-            ResponsiveTwoPane(
-                first = { itemModifier ->
+            FlowCard(
+                accentColor = MaterialTheme.colorScheme.primary,
+                verticalPadding = 8.dp
+            ) {
+                Column {
                     MetricPill(
                         label = "Total Used",
                         amountValue = cardTotals.used,
                         color = warningColor(),
-                        modifier = itemModifier
+                        modifier = Modifier.fillMaxWidth(),
+                        compact = true
                     )
-                },
-                second = { itemModifier ->
+                    Spacer(modifier = Modifier.height(4.dp))
+                    HorizontalDivider(
+                        thickness = 2.dp,
+                        color = if (useDarkTheme) Color.White else Color(0xFF6B7280)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
                     MetricPill(
                         label = "Total Paid",
                         amountValue = cardTotals.paid,
                         color = MaterialTheme.colorScheme.secondary,
-                        modifier = itemModifier
+                        modifier = Modifier.fillMaxWidth(),
+                        compact = true
                     )
                 }
-            )
+            }
         }
 
         item {
-            AdaptiveHeaderRow(
-                leading = {
-                    Column {
-                        Text(
-                            text = "Account Activity",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Live summary of your accounts and person balances.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
-                    }
-                },
-                trailing = {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Account Activity",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                     Box {
                         Row(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
-                                .border(
-                                    width = 1.dp,
-                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
-                                    shape = RoundedCornerShape(999.dp)
-                                )
-                                .clickable { isFilterOpen = true }
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f))
+                                .bounceClick { isFilterOpen = true }
                                 .padding(horizontal = 14.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -515,7 +495,13 @@ fun HomeScreen(
                         }
                     }
                 }
-            )
+                Text(
+                    text = "Live summary of your accounts and person balances.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
         }
 
         if (activityCards.isEmpty() && activityPersons.isEmpty()) {
@@ -600,7 +586,7 @@ fun HomeScreen(
 @Composable
 private fun HomeSavingsCard(customer: com.radafiq.data.models.CustomerSummary) {
     val accent = MaterialTheme.colorScheme.secondary
-    FlowCard(accentColor = accent) {
+    FlowCard(accentColor = accent, modifier = Modifier.bounceClick { }) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -621,7 +607,7 @@ private fun HomeSavingsCard(customer: com.radafiq.data.models.CustomerSummary) {
                     .maxByOrNull { it.date }?.bankAccountName
                 if (latestBankName != null) {
                     Text(
-                        text = "🏦 $latestBankName",
+                        text = latestBankName,
                         style = MaterialTheme.typography.labelSmall,
                         color = accent,
                         modifier = Modifier.padding(top = 2.dp)
@@ -688,8 +674,7 @@ private fun DriveOperationCard(message: String) {
 
 @Composable
 private fun HomeGreetingHeader(
-    profileName: String,
-    photoUrl: String
+    profileName: String
 ) {
     val greeting = remember {
         when (LocalTime.now().hour) {
@@ -699,18 +684,9 @@ private fun HomeGreetingHeader(
         }
     }
     val resolvedProfileName = profileName.trim().ifBlank { "Your Profile" }
-    val initials = remember(resolvedProfileName) {
-        resolvedProfileName
-            .split(Regex("\\s+"))
-            .filter { it.isNotBlank() }
-            .take(2)
-            .joinToString(separator = "") { it.first().uppercaseChar().toString() }
-            .ifBlank { "RA" }
-    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column {
@@ -724,34 +700,6 @@ private fun HomeGreetingHeader(
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onBackground
             )
-        }
-
-        Box(
-            modifier = Modifier
-                .size(46.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
-                .border(1.dp, Color.White.copy(alpha = 0.6f), CircleShape)
-        ) {
-            if (photoUrl.isNotBlank()) {
-                AsyncImage(
-                    model = photoUrl,
-                    contentDescription = "Profile photo",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = initials,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
         }
     }
 }
@@ -768,7 +716,7 @@ private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOut
         }
     }
 
-    FlowCard(accentColor = accountAccent(card.accountKind)) {
+    FlowCard(accentColor = accountAccent(card.accountKind), modifier = Modifier.bounceClick { }) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Top,
@@ -818,8 +766,7 @@ private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOut
                                 modifier = Modifier
                                     .weight(1f)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(warningColor().copy(alpha = 0.08f))
-                                    .border(1.dp, warningColor().copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f))
                                     .padding(horizontal = 10.dp, vertical = 6.dp)
                             ) {
                                 Text(
@@ -842,8 +789,7 @@ private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOut
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-                                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f))
                                         .padding(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
                                     Text(
@@ -884,7 +830,7 @@ private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOut
 private fun HomePersonCard(person: PersonSummary) {
     val personAccent = MaterialTheme.colorScheme.primary
 
-    FlowCard(accentColor = personAccent) {
+    FlowCard(accentColor = personAccent, modifier = Modifier.bounceClick { }) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -1073,7 +1019,8 @@ fun EmiScheduleScreen(
         item {
             PageHeader(
                 title = "EMI Schedule",
-                subtitle = "Amortization view of all active EMI plans across customers."
+                subtitle = "Amortization view of all active EMI plans across customers.",
+                trailing = {}
             )
         }
 
@@ -1098,26 +1045,44 @@ fun EmiScheduleScreen(
         item {
             FlowCard(accentColor = MaterialTheme.colorScheme.primary) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min)
                 ) {
                     MetricPill(
                         label = "Upcoming",
                         amountValue = totalUpcoming,
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        transparentBackground = true
+                    )
+                    VerticalDivider(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .padding(vertical = 10.dp),
+                        thickness = 1.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
                     )
                     MetricPill(
                         label = "Pending",
                         amountValue = totalPending,
                         color = warningColor(),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        transparentBackground = true
+                    )
+                    VerticalDivider(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .padding(vertical = 10.dp),
+                        thickness = 1.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
                     )
                     MetricPill(
                         label = "Settled",
                         amountValue = totalPaid,
                         color = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        transparentBackground = true
                     )
                 }
             }
@@ -1168,7 +1133,7 @@ private fun EmiAmortizationCard(
     onDeleteGroup: () -> Unit
 ) {
     val groupId = rows.firstOrNull()?.groupId ?: planName
-    var expanded by rememberSaveable(groupId) { mutableStateOf(true) }
+    var expanded by rememberSaveable(groupId) { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     // Progress = settled / total (by count, not amount)
     val settledCount = rows.count { it.isSettled }
@@ -1180,7 +1145,7 @@ private fun EmiAmortizationCard(
         androidx.compose.foundation.layout.Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
+                .bounceClick { expanded = !expanded }
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1243,7 +1208,7 @@ private fun EmiAmortizationCard(
 
             // Progress bar
             androidx.compose.material3.LinearProgressIndicator(
-                progress = progress,
+                progress = { progress },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp)
@@ -1264,50 +1229,58 @@ private fun EmiAmortizationCard(
                 EmiMiniStat("Settled", groupPaid, MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
             }
 
-            // Expand/collapse hint
+            // Expand/collapse chevron
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp),
+                    .padding(top = 6.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val chevronRotation by animateFloatAsState(
+                    targetValue = if (expanded) 180f else 0f,
+                    label = "chevronRotation"
+                )
                 Icon(
-                    imageVector = if (expanded) Icons.Default.AccountBox else Icons.Default.CalendarMonth,
+                    imageVector = Icons.Default.ArrowDropDown,
                     contentDescription = if (expanded) "Collapse schedule" else "Expand schedule",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = if (expanded) "Tap to collapse" else "Tap to view schedule",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    modifier = Modifier
+                        .size(20.dp)
+                        .rotate(chevronRotation)
                 )
             }
         }
 
-        if (expanded) {
-            Spacer(modifier = Modifier.height(12.dp))
-            Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
-            Spacer(modifier = Modifier.height(8.dp))
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(tween(250)),
+            exit = fadeOut(tween(150))
+        ) {
+            Column(
+                modifier = Modifier.animateContentSize()
+            ) {
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                Spacer(modifier = Modifier.height(8.dp))
 
-            // Table header
-            EmiTableHeader()
+                // Table header
+                EmiTableHeader()
 
-            Divider(
-                modifier = Modifier.padding(vertical = 4.dp),
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-            )
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                )
 
-            // Instalment rows
-            rows.forEachIndexed { idx, row ->
-                EmiTableRow(row = row, today = today, vm = vm)
-                if (idx != rows.lastIndex) {
-                    Divider(
-                        modifier = Modifier.padding(vertical = 2.dp),
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
-                    )
+                // Instalment rows
+                rows.forEachIndexed { idx, row ->
+                    EmiTableRow(row = row, today = today, vm = vm)
+                    if (idx != rows.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 2.dp),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+                        )
+                    }
                 }
             }
         }
@@ -1461,7 +1434,7 @@ private fun EmiTableRow(row: EmiGroupRow, today: LocalDate, vm: MainViewModel) {
                 .weight(1.3f)
                 .clip(RoundedCornerShape(4.dp))
                 .clickable { showDueDatePicker = true }
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.07f))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f))
                 .padding(horizontal = 4.dp, vertical = 2.dp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
@@ -1489,14 +1462,14 @@ private fun EmiTableRow(row: EmiGroupRow, today: LocalDate, vm: MainViewModel) {
                 maxLines = 1,
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
-                    .background(statusColor.copy(alpha = 0.13f))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f))
                     .clickable {
                         val newSettled = !row.isSettled
                         row.transactionIds.forEach { id ->
                             vm.toggleTransactionSettled(id, newSettled)
                         }
                     }
-                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
             )
         }
     }

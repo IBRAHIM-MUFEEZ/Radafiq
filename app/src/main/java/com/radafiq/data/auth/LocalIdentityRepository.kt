@@ -3,7 +3,7 @@ package com.radafiq.data.auth
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
+import androidx.security.crypto.MasterKey
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import java.util.UUID
@@ -15,20 +15,39 @@ object LocalIdentityRepository {
     @Volatile
     private var cachedUserId: String? = null
 
+    @Volatile
+    private var _prefs: SharedPreferences? = null
+
+    /** Pre-warm the encrypted prefs cache from a background coroutine. */
+    fun warmUp(context: Context) {
+        if (cachedUserId != null) return // already warm
+        val prefs = securePreferencesCached(context)
+        cachedUserId = prefs.getString(KEY_USER_ID, null)
+    }
+
     // FIX-16: Use EncryptedSharedPreferences to protect the user ID (Firestore path key)
-    private fun securePreferences(context: Context): SharedPreferences {
-        return runCatching {
-            val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-            EncryptedSharedPreferences.create(
-                PREFERENCES_NAME,
-                masterKeyAlias,
-                context.applicationContext,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-        }.getOrElse {
-            // Fallback to plain prefs if keystore is unavailable (e.g. emulator without keystore)
-            context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    private fun securePreferencesCached(context: Context): SharedPreferences {
+        _prefs?.let { return it }
+        return synchronized(this) {
+            _prefs ?: run {
+                val masterKey = MasterKey.Builder(context.applicationContext)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                val prefs = runCatching {
+                    EncryptedSharedPreferences.create(
+                        context.applicationContext,
+                        PREFERENCES_NAME,
+                        masterKey,
+                        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                    )
+                }.getOrElse {
+                    // Fallback to plain prefs if keystore is unavailable
+                    context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                }
+                _prefs = prefs
+                prefs
+            }
         }
     }
 
@@ -46,7 +65,7 @@ object LocalIdentityRepository {
             // Keep local cache in sync so Firestore listeners use the right path
             if (cachedUserId != firebaseUid) {
                 synchronized(this) {
-                    securePreferences(context.applicationContext)
+                    securePreferencesCached(context.applicationContext)
                         .edit()
                         .putString(KEY_USER_ID, firebaseUid)
                         .apply()
@@ -74,7 +93,7 @@ object LocalIdentityRepository {
     ) {
         if (uid.isBlank()) return
         synchronized(this) {
-            securePreferences(context.applicationContext)
+            securePreferencesCached(context.applicationContext)
                 .edit()
                 .putString(KEY_USER_ID, uid)
                 .apply()
@@ -99,7 +118,7 @@ object LocalIdentityRepository {
         }
         val emailId = "google_${email.trim().lowercase()}"
         synchronized(this) {
-            securePreferences(context.applicationContext)
+            securePreferencesCached(context.applicationContext)
                 .edit()
                 .putString(KEY_USER_ID, emailId)
                 .apply()
@@ -115,7 +134,7 @@ object LocalIdentityRepository {
         synchronized(this) {
             FirebaseAuth.getInstance().signOut()
             val newId = "device_${UUID.randomUUID()}"
-            securePreferences(context.applicationContext)
+            securePreferencesCached(context.applicationContext)
                 .edit()
                 .putString(KEY_USER_ID, newId)
                 .apply()
@@ -124,7 +143,7 @@ object LocalIdentityRepository {
     }
 
     private fun loadOrCreateUserId(context: Context): String {
-        val preferences = securePreferences(context)
+        val preferences = securePreferencesCached(context)
         val existingUserId = preferences.getString(KEY_USER_ID, null)
         if (!existingUserId.isNullOrBlank()) {
             return existingUserId

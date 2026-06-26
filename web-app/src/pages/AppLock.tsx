@@ -1,13 +1,31 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 import RadafiqLogo from '../components/RadafiqLogo';
 import { isPlatformAuthenticatorAvailable } from '../utils/passkey';
-import { fadeInScale, fadeInUp } from '../utils/animations';
+
+const pageVariants = {
+  hidden: { opacity: 0, scale: 0.97 },
+  visible: { opacity: 1, scale: 1, transition: { duration: 0.4, ease: 'easeOut' as const } },
+};
+
+const logoVariants = {
+  hidden: { opacity: 0, scale: 0.85 },
+  visible: { opacity: 1, scale: 1, transition: { duration: 0.5, ease: 'easeOut' as const } },
+};
+
+const padVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.4, delay: 0.2, ease: 'easeOut' as const } },
+};
+
+const dotVariants = {
+  hidden: { scale: 0 },
+  visible: { scale: 1, transition: { type: 'spring' as const, stiffness: 500, damping: 15 } },
+};
 
 export default function AppLock() {
   const { security, verifyPasscode, resetPasscodeWithRecovery, hasPasskey, authenticateWithPasskey } = useApp();
-  const logoRef = useRef<HTMLDivElement>(null);
-  const padRef = useRef<HTMLDivElement>(null);
   const [passcode, setPasscode] = useState('');
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
@@ -17,11 +35,6 @@ export default function AppLock() {
   const [confirmNew, setConfirmNew] = useState('');
   const [passkeyAvailable, setPasskeyAvailable] = useState(false);
   const [passkeyChecking, setPasskeyChecking] = useState(false);
-
-  useEffect(() => {
-    if (logoRef.current) fadeInScale(logoRef.current);
-    if (padRef.current) fadeInUp(padRef.current, 200);
-  }, []);
 
   useEffect(() => {
     if (hasPasskey) {
@@ -116,7 +129,7 @@ export default function AppLock() {
     '1', '2', '3',
     '4', '5', '6',
     '7', '8', '9',
-    '',  '0', '\u232B',
+    '',  '0', '⌫',
   ];
 
   const page: React.CSSProperties = {
@@ -162,7 +175,7 @@ export default function AppLock() {
 
   if (showRecovery) {
     return (
-      <div style={page}>
+      <motion.div style={page} variants={pageVariants} initial="hidden" animate="visible">
         <div style={{ ...card, maxWidth: 400 }}>
           <div style={{ marginBottom: '1.5rem' }}>
             <h2 style={{ color: 'var(--text)', marginBottom: 6 }}>Forgot Passcode</h2>
@@ -171,9 +184,14 @@ export default function AppLock() {
             </p>
           </div>
 
-          <div style={{ background: 'color-mix(in srgb, var(--surface) 90%, transparent)', border: '1px solid color-mix(in srgb, var(--primary) 25%, transparent)', borderRadius: 20, padding: '1.25rem', marginBottom: '1rem' }}>
+          <motion.div
+            style={{ background: 'color-mix(in srgb, var(--surface) 90%, transparent)', border: '1px solid color-mix(in srgb, var(--primary) 25%, transparent)', borderRadius: 20, padding: '1.25rem', marginBottom: '1rem' }}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15, duration: 0.3 }}
+          >
             <p style={{ color: 'var(--text)', fontWeight: 600, fontSize: '0.9375rem' }}>{security.recoveryQuestion}</p>
-          </div>
+          </motion.div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
             {[
@@ -206,57 +224,86 @@ export default function AppLock() {
               onClick={() => { setShowRecovery(false); setError(''); }}
               style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.875rem', padding: '0.5rem' }}
             >
-              {'\u2190'} Back to PIN
+              {'←'} Back to PIN
             </button>
           </div>
         </div>
-      </div>
+      </motion.div>
     );
   }
 
   return (
-    <div style={page}>
+    <motion.div style={page} variants={pageVariants} initial="hidden" animate="visible">
       <div style={card}>
-
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.25rem' }} ref={logoRef}>
+        <motion.div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.25rem' }} variants={logoVariants}>
           <RadafiqLogo size={80} />
-        </div>
+        </motion.div>
 
-        <h2 style={{ color: 'var(--text)', marginBottom: 6, fontSize: '1.5rem', fontWeight: 700 }}>
+        <motion.h2
+          style={{ color: 'var(--text)', marginBottom: 6, fontSize: '1.5rem', fontWeight: 700 }}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1, duration: 0.3 }}
+        >
           Radafiq is Locked
-        </h2>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '1.75rem' }}>
+        </motion.h2>
+        <motion.p
+          style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '1.75rem' }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.15, duration: 0.3 }}
+        >
           Enter your 6-digit passcode to continue.
-        </p>
+        </motion.p>
 
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginBottom: '1.25rem' }}>
+        <motion.div
+          style={{ display: 'flex', justifyContent: 'center', gap: 14, marginBottom: '1.25rem' }}
+          variants={padVariants}
+        >
           {Array.from({ length: 6 }, (_, i) => (
-            <div key={i} style={{
-              width: 14, height: 14, borderRadius: '50%', flexShrink: 0,
-              background: i < passcode.length ? 'var(--primary)' : 'color-mix(in srgb, var(--primary) 25%, transparent)',
-              transition: 'background 0.12s',
-            }} />
+            <motion.div
+              key={i}
+              style={{
+                width: 14, height: 14, borderRadius: '50%', flexShrink: 0,
+                background: i < passcode.length ? 'var(--primary)' : 'color-mix(in srgb, var(--primary) 25%, transparent)',
+                transition: 'background 0.12s',
+              }}
+              variants={dotVariants}
+              animate={i < passcode.length ? { scale: [0, 1.2, 1] } : undefined}
+              transition={{ duration: 0.2 }}
+            />
           ))}
-        </div>
+        </motion.div>
 
         <div style={{ minHeight: 24, marginBottom: '0.75rem' }}>
-          {error && <p style={{ color: '#EF4444', fontSize: '0.875rem' }}>{error}</p>}
+          {error && (
+            <motion.p
+              style={{ color: '#EF4444', fontSize: '0.875rem' }}
+              initial={{ opacity: 0, x: -5 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              {error}
+            </motion.p>
+          )}
         </div>
 
-        <div ref={padRef} style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: 10,
-          width: '100%',
-          maxWidth: 300,
-          margin: '0 auto 1.5rem',
-        }}>
+        <motion.div
+          variants={padVariants}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 10,
+            width: '100%',
+            maxWidth: 300,
+            margin: '0 auto 1.5rem',
+          }}
+        >
           {KEYS.map((key, i) => {
             if (key === '') return <div key={i} />;
-            const isBack = key === '\u232B';
+            const isBack = key === '⌫';
             const disabled = checking || (isBack ? passcode.length === 0 : passcode.length >= 6);
             return (
-              <button
+              <motion.button
                 key={i}
                 type="button"
                 aria-label={isBack ? 'Backspace' : `Digit ${key}`}
@@ -266,12 +313,15 @@ export default function AppLock() {
                   if (isBack) pressBackspace();
                   else pressDigit(key);
                 }}
+                whileTap={disabled ? {} : { scale: 0.93 }}
+                whileHover={disabled ? {} : { background: 'color-mix(in srgb, var(--primary) 15%, transparent)' }}
+                transition={{ type: 'spring', stiffness: 400, damping: 20 }}
               >
                 {key}
-              </button>
+              </motion.button>
             );
           })}
-        </div>
+        </motion.div>
 
         {security.hasRecoveryQuestion && (
           <button
@@ -310,12 +360,12 @@ export default function AppLock() {
             }}
           >
             <span style={{ fontSize: '1.25rem', lineHeight: 1 }}>
-              {passkeyChecking ? '\u23F3' : '\uD83D\uDD11'}
+              {passkeyChecking ? '⏳' : '🔑'}
             </span>
             {passkeyChecking ? 'Verifying...' : 'Use Fingerprint / Face ID'}
           </button>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }

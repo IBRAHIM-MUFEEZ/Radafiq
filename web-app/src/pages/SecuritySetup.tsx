@@ -1,7 +1,20 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
+import { motion } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 import RadafiqLogo from '../components/RadafiqLogo';
-import { fadeInScale, fadeInUp } from '../utils/animations';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.12, delayChildren: 0.1 },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' as const } },
+};
 
 const RECOVERY_QUESTIONS = [
   'What is your email ID?',
@@ -12,8 +25,6 @@ const RECOVERY_QUESTIONS = [
 
 export default function SecuritySetup() {
   const { setPasscode } = useApp();
-  const logoRef = useRef<HTMLDivElement>(null);
-  const formRef = useRef<HTMLDivElement>(null);
   const [passcode, setPasscodeVal] = useState('');
   const [confirm, setConfirm] = useState('');
   const [question, setQuestion] = useState(RECOVERY_QUESTIONS[0]);
@@ -21,13 +32,7 @@ export default function SecuritySetup() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (logoRef.current) fadeInScale(logoRef.current);
-    if (formRef.current) fadeInUp(formRef.current, 200);
-  }, []);
-
   const passcodesMatch = passcode.length === 6 && passcode === confirm;
-  // BUG-30 fix: require at least 3 characters for recovery answer
   const canSave = passcodesMatch && question && answer.trim().length >= 3;
 
   const handleSave = async () => {
@@ -44,21 +49,31 @@ export default function SecuritySetup() {
   };
 
   return (
-    <div className="radafiq-bg" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+    <motion.div
+      className="radafiq-bg"
+      style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
       <div style={{ width: '100%', maxWidth: 480 }}>
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }} ref={logoRef}>
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
+        <motion.div style={{ textAlign: 'center', marginBottom: '2rem' }} variants={itemVariants}>
+          <motion.div
+            style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}
+            whileHover={{ scale: 1.05 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 10 }}
+          >
             <RadafiqLogo size={72} />
-          </div>
+          </motion.div>
           <h2>Protect the App</h2>
           <p className="text-muted text-sm" style={{ marginTop: 4 }}>
             Set a 6-digit passcode and a recovery question to secure your data.
           </p>
-        </div>
+        </motion.div>
 
-        <div className="flow-card">
+        <motion.div className="flow-card" variants={itemVariants} whileHover={{ y: -1 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div className="form-group">
+            <motion.div className="form-group" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15, duration: 0.3 }}>
               <label className="form-label">Create Passcode (6 digits)</label>
               <input
                 className="form-input"
@@ -69,9 +84,9 @@ export default function SecuritySetup() {
                 onChange={e => setPasscodeVal(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 placeholder="••••••"
               />
-            </div>
+            </motion.div>
 
-            <div className="form-group">
+            <motion.div className="form-group" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.3 }}>
               <label className="form-label">Confirm Passcode</label>
               <input
                 className={`form-input${confirm && !passcodesMatch ? ' error' : ''}`}
@@ -83,11 +98,13 @@ export default function SecuritySetup() {
                 placeholder="••••••"
               />
               {confirm && !passcodesMatch && (
-                <span className="form-error">Passcodes must match and be exactly 6 digits.</span>
+                <motion.span className="form-error" initial={{ opacity: 0, x: -5 }} animate={{ opacity: 1, x: 0 }}>
+                  Passcodes must match and be exactly 6 digits.
+                </motion.span>
               )}
-            </div>
+            </motion.div>
 
-            <div className="form-group">
+            <motion.div className="form-group" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25, duration: 0.3 }}>
               <label className="form-label">Recovery Question</label>
               <select
                 className="form-select"
@@ -98,9 +115,9 @@ export default function SecuritySetup() {
                   <option key={q} value={q}>{q}</option>
                 ))}
               </select>
-            </div>
+            </motion.div>
 
-            <div className="form-group">
+            <motion.div className="form-group" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.3 }}>
               <label className="form-label">Recovery Answer</label>
               <input
                 className="form-input"
@@ -112,20 +129,22 @@ export default function SecuritySetup() {
               <span className="text-muted text-xs" style={{ marginTop: 4 }}>
                 Forgot passcode recovery works only through this answer.
               </span>
-            </div>
+            </motion.div>
 
             {error && <p className="text-error text-sm">{error}</p>}
 
-            <button
+            <motion.button
               className="btn btn-primary btn-full btn-lg"
               onClick={handleSave}
               disabled={!canSave || saving}
+              whileTap={{ scale: 0.98 }}
+              whileHover={{ scale: 1.01 }}
             >
               {saving ? 'Saving...' : 'Save Security Setup'}
-            </button>
+            </motion.button>
           </div>
-        </div>
+        </motion.div>
       </div>
-    </div>
+    </motion.div>
   );
 }

@@ -3,7 +3,7 @@ package com.radafiq.data.security
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
+import androidx.security.crypto.MasterKey
 import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.SecretKeyFactory
@@ -34,8 +34,13 @@ class AppSecurityRepository(context: Context) {
 
     init {
         migrateLegacyPreferencesIfNeeded()
-        _state = MutableStateFlow(loadState())
+        _state = MutableStateFlow(loadState(preferences))
         state = _state.asStateFlow()
+    }
+
+    /** Pre-warm already loads eagerly in init; kept for API compatibility. */
+    fun warmUp() {
+        // Already initialized in init — no-op
     }
 
     fun setPasscode(
@@ -218,9 +223,7 @@ class AppSecurityRepository(context: Context) {
     }
 
     fun lock() {
-        if (_state.value.lockEnabled && _state.value.hasPasscode) {
-            _state.value = _state.value.copy(isUnlocked = false)
-        }
+        _state.value = _state.value.copy(isUnlocked = false)
     }
 
     fun exportSettings(): Map<String, Any> {
@@ -233,21 +236,20 @@ class AppSecurityRepository(context: Context) {
     }
 
     fun restoreSettings(data: Map<String, Any?>) {
-        val lockEnabled = data[KEY_LOCK_ENABLED] as? Boolean ?: false
-        val biometricEnabled = data[KEY_BIOMETRIC_ENABLED] as? Boolean ?: false
-        val passcodeHash = (data[KEY_PASSCODE_HASH] as? String).orEmpty()
-        val passcodeSalt = (data[KEY_PASSCODE_SALT] as? String).orEmpty()
-        val recoveryQuestion = (data[KEY_RECOVERY_QUESTION] as? String).orEmpty()
-        val recoveryAnswerHash = (data[KEY_RECOVERY_ANSWER_HASH] as? String).orEmpty()
+        // Backups intentionally exclude passcode/recovery hashes (see exportSettings).
+        // Only override lock/biometric if the backup includes them; preserve existing
+        // passcode and recovery state so the user isn't forced to re-enroll after restore.
+        val lockEnabled = if (data.containsKey(KEY_LOCK_ENABLED)) {
+            (data[KEY_LOCK_ENABLED] as? Boolean) ?: false
+        } else _state.value.lockEnabled
+        val biometricEnabled = if (data.containsKey(KEY_BIOMETRIC_ENABLED)) {
+            (data[KEY_BIOMETRIC_ENABLED] as? Boolean) ?: false
+        } else _state.value.biometricEnabled
 
-        val hasPasscode = passcodeHash.isNotBlank()
-        val hasRecovery = recoveryQuestion.isNotBlank() && recoveryAnswerHash.isNotBlank()
+        val currentHash = preferences.getString(KEY_PASSCODE_HASH, null)
+        val hasPasscode = !currentHash.isNullOrBlank()
 
         preferences.edit().apply {
-            if (hasPasscode) putString(KEY_PASSCODE_HASH, passcodeHash) else remove(KEY_PASSCODE_HASH)
-            if (passcodeSalt.isNotBlank()) putString(KEY_PASSCODE_SALT, passcodeSalt) else remove(KEY_PASSCODE_SALT)
-            if (recoveryQuestion.isNotBlank()) putString(KEY_RECOVERY_QUESTION, recoveryQuestion) else remove(KEY_RECOVERY_QUESTION)
-            if (recoveryAnswerHash.isNotBlank()) putString(KEY_RECOVERY_ANSWER_HASH, recoveryAnswerHash) else remove(KEY_RECOVERY_ANSWER_HASH)
             putBoolean(KEY_LOCK_ENABLED, lockEnabled && hasPasscode)
             putBoolean(KEY_BIOMETRIC_ENABLED, biometricEnabled && hasPasscode)
             apply()
@@ -257,19 +259,19 @@ class AppSecurityRepository(context: Context) {
             lockEnabled = lockEnabled && hasPasscode,
             biometricEnabled = biometricEnabled && hasPasscode,
             hasPasscode = hasPasscode,
-            hasRecoveryQuestion = hasRecovery,
-            recoveryQuestion = recoveryQuestion,
+            hasRecoveryQuestion = _state.value.hasRecoveryQuestion,
+            recoveryQuestion = _state.value.recoveryQuestion,
             isUnlocked = true
         )
     }
 
-    private fun loadState(): AppSecurityState {
-        val hasPasscode = !preferences.getString(KEY_PASSCODE_HASH, null).isNullOrBlank()
-        val recoveryQuestion = preferences.getString(KEY_RECOVERY_QUESTION, null).orEmpty()
+    private fun loadState(prefs: SharedPreferences): AppSecurityState {
+        val hasPasscode = !prefs.getString(KEY_PASSCODE_HASH, null).isNullOrBlank()
+        val recoveryQuestion = prefs.getString(KEY_RECOVERY_QUESTION, null).orEmpty()
         val hasRecoveryQuestion = recoveryQuestion.isNotBlank() &&
-            !preferences.getString(KEY_RECOVERY_ANSWER_HASH, null).isNullOrBlank()
-        val lockEnabled = preferences.getBoolean(KEY_LOCK_ENABLED, false) && hasPasscode
-        val biometricEnabled = preferences.getBoolean(KEY_BIOMETRIC_ENABLED, false) && hasPasscode
+            !prefs.getString(KEY_RECOVERY_ANSWER_HASH, null).isNullOrBlank()
+        val lockEnabled = prefs.getBoolean(KEY_LOCK_ENABLED, false) && hasPasscode
+        val biometricEnabled = prefs.getBoolean(KEY_BIOMETRIC_ENABLED, false) && hasPasscode
         return AppSecurityState(
             lockEnabled = lockEnabled,
             biometricEnabled = biometricEnabled,
@@ -418,12 +420,14 @@ class AppSecurityRepository(context: Context) {
     }
 
     private fun createSecurePreferences(context: Context): SharedPreferences {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
         return runCatching {
-            val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
             EncryptedSharedPreferences.create(
-                ENCRYPTED_PREFERENCES_NAME,
-                masterKeyAlias,
                 context,
+                ENCRYPTED_PREFERENCES_NAME,
+                masterKey,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
@@ -433,19 +437,15 @@ class AppSecurityRepository(context: Context) {
             // attempt a keystore key rotation (delete + recreate) and retry once.
             android.util.Log.e("AppSecurity", "EncryptedSharedPreferences creation failed: ${e.localizedMessage}", e)
             runCatching {
-                // Attempt key rotation: delete the old master key and recreate
-                val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
-                keyStore.load(null)
-                if (keyStore.containsAlias(MasterKeys.AES256_GCM_SPEC.keystoreAlias)) {
-                    keyStore.deleteEntry(MasterKeys.AES256_GCM_SPEC.keystoreAlias)
-                }
-                // Also delete the corrupted prefs file so it can be recreated cleanly
+                // Attempt key rotation: delete the corrupted prefs file so it can be recreated cleanly
                 context.deleteSharedPreferences(ENCRYPTED_PREFERENCES_NAME)
-                val newMasterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
+                val newMasterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
                 EncryptedSharedPreferences.create(
-                    ENCRYPTED_PREFERENCES_NAME,
-                    newMasterKeyAlias,
                     context,
+                    ENCRYPTED_PREFERENCES_NAME,
+                    newMasterKey,
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                 )

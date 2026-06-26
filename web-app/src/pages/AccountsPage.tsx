@@ -1,19 +1,35 @@
-import React, { useMemo, useEffect, useRef } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { Settings } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatMoney } from '../utils/format';
 import { CardSummary, isVisibleInTransactions } from '../types/models';
 import AnimatedMoney from '../components/AnimatedMoney';
-import { fadeInUp, staggerFadeInUp } from '../utils/animations';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.06, delayChildren: 0.1 },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 16 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' as const } },
+};
 
 function AccountRow({ card, onClick }: { card: CardSummary; onClick: () => void }) {
   const accentColor = card.accountKind === 'credit_card' ? 'var(--warning)' : 'var(--secondary)';
   return (
-    <div
-      className="flow-card account-card"
+    <motion.div
+      className="flow-card"
       style={{ '--card-accent': accentColor, cursor: 'pointer', marginBottom: '0.75rem' } as React.CSSProperties}
       onClick={onClick}
+      variants={itemVariants}
+      whileHover={{ y: -2, transition: { duration: 0.2 } }}
+      whileTap={{ scale: 0.99 }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ minWidth: 0 }}>
@@ -25,15 +41,13 @@ function AccountRow({ card, onClick }: { card: CardSummary; onClick: () => void 
           <div className="text-muted text-xs">Total used</div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
 export default function AccountsPage() {
   const { cards, customers } = useApp();
   const navigate = useNavigate();
-  const pageRef = useRef<HTMLDivElement>(null);
-  const cardListRef = useRef<HTMLDivElement>(null);
 
   const usedAccountIds = useMemo(() =>
     new Set(customers.flatMap(c => c.transactions.map(t => t.accountId))),
@@ -47,11 +61,6 @@ export default function AccountsPage() {
 
   const creditCards = visibleCards.filter(c => c.accountKind === 'credit_card');
   const bankAccounts = visibleCards.filter(c => c.accountKind === 'bank_account');
-
-  useEffect(() => {
-    if (pageRef.current) fadeInUp(pageRef.current, 0, 400);
-    if (cardListRef.current) staggerFadeInUp('.account-card', 60, 'first', 400);
-  }, []);
 
   const personCards = useMemo(() => {
     const map = new Map<string, { accountId: string; name: string; used: number; due: number }>();
@@ -74,8 +83,13 @@ export default function AccountsPage() {
   }, [customers]);
 
   return (
-    <div className="page-content" ref={pageRef}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+    <motion.div
+      className="page-content"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
+      <motion.div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' }} variants={itemVariants}>
         <div>
           <h2>Accounts</h2>
           <p className="text-muted text-sm" style={{ marginTop: 4 }}>Monitor banks, credit cards, dues, and usage.</p>
@@ -83,45 +97,52 @@ export default function AccountsPage() {
         <button className="btn btn-ghost" onClick={() => navigate('/settings')}>
           <Settings size={18} />
         </button>
-      </div>
+      </motion.div>
 
       {visibleCards.length === 0 && personCards.length === 0 ? (
-        <div className="empty-state">
+        <motion.div className="empty-state" variants={itemVariants}>
           <div className="empty-state-icon">💳</div>
           <h3>No linked totals yet</h3>
           <p>Customer transactions will appear here automatically.</p>
-        </div>
+        </motion.div>
       ) : (
         <>
           {creditCards.length > 0 && (
-            <>
+            <motion.div variants={itemVariants}>
               <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
                 Credit Cards
               </div>
               {creditCards.map(card => (
                 <AccountRow key={card.id} card={card} onClick={() => navigate(`/accounts/${card.id}`)} />
               ))}
-            </>
+            </motion.div>
           )}
 
           {bankAccounts.length > 0 && (
-            <>
+            <motion.div variants={itemVariants}>
               <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '1rem 0 8px' }}>
                 Bank Accounts
               </div>
               {bankAccounts.map(card => (
                 <AccountRow key={card.id} card={card} onClick={() => navigate(`/accounts/${card.id}`)} />
               ))}
-            </>
+            </motion.div>
           )}
 
           {personCards.length > 0 && (
-            <>
+            <motion.div variants={itemVariants}>
               <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '1rem 0 8px' }}>
                 Persons
               </div>
               {personCards.map(p => (
-                <div key={p.accountId} className="flow-card account-card" style={{ '--card-accent': 'var(--primary)', marginBottom: '0.75rem' } as React.CSSProperties}>
+                <motion.div
+                  key={p.accountId}
+                  className="flow-card"
+                  style={{ '--card-accent': 'var(--primary)', marginBottom: '0.75rem' } as React.CSSProperties}
+                  variants={itemVariants}
+                  whileHover={{ y: -2 }}
+                  whileTap={{ scale: 0.99 }}
+                >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ minWidth: 0 }}>
                       <div className="truncate font-semibold">{p.name}</div>
@@ -132,12 +153,12 @@ export default function AccountsPage() {
                       <div className="text-muted text-xs">{p.due > 0 ? 'Due' : 'Settled'}</div>
                     </div>
                   </div>
-                </div>
+                </motion.div>
               ))}
-            </>
+            </motion.div>
           )}
         </>
       )}
-    </div>
+    </motion.div>
   );
 }

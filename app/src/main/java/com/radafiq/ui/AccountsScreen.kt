@@ -17,7 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -51,6 +51,7 @@ import com.radafiq.data.models.CardSummary
 import com.radafiq.data.models.CustomerSummary
 import com.radafiq.reminders.DueReminderScheduler
 import com.radafiq.viewmodel.MainViewModel
+import com.radafiq.viewmodel.PersonSummary
 import kotlin.math.abs
 
 @Composable
@@ -59,42 +60,12 @@ fun AccountsScreen(
     modifier: Modifier = Modifier,
     onOpenAccount: (String) -> Unit = {}
 ) {
-    val allCards by vm.cards.collectAsState()
-    val customers by vm.customers.collectAsState()
-    // snapshotKey changes on every Firestore snapshot so remember caches always invalidate
-    val snapshotKey = customers.sumOf { it.snapshotVersion }
-    val usedAccountIds = remember(snapshotKey) {
-        val set = mutableSetOf<String>()
-        customers.forEach { c -> c.transactions.forEach { set.add(it.accountId) } }
-        set
-    }
-    val cards = remember(snapshotKey) {
-        if (usedAccountIds.isEmpty()) emptyList()
-        else allCards.filter { it.id in usedAccountIds }
-    }
-    val creditCards = cards.filter { it.accountKind == AccountKind.CREDIT_CARD }
-    val bankAccounts = cards.filter { it.accountKind == AccountKind.BANK_ACCOUNT }
-
-    // Aggregate person transactions for the Accounts tab
-    data class PersonEntry(val accountId: String, val name: String, val used: Double, val due: Double)
-    val personCards = remember(snapshotKey) {
-        val map = linkedMapOf<String, PersonEntry>()
-        customers.forEach { customer ->
-            customer.transactions
-                .filter { it.accountKind == AccountKind.PERSON && it.isVisibleInTransactions() }
-                .forEach { txn ->
-                    val key = txn.accountId
-                    // BUG-01: Ensure name is never blank — fall back through multiple sources
-                    val name = txn.personName.ifBlank { txn.accountName }.ifBlank { txn.accountId }.ifBlank { "Unknown" }
-                    val used = txn.amount
-                    val due = if (txn.isSettled) 0.0 else (txn.amount - txn.partialPaidAmount).coerceAtLeast(0.0)
-                    val existing = map[key]
-                    map[key] = if (existing == null) PersonEntry(key, name, used, due)
-                               else existing.copy(used = existing.used + used, due = existing.due + due)
-                }
-        }
-        map.values.sortedByDescending { it.due }
-    }
+    val aggregates by vm.aggregates.collectAsState()
+    val visibleCards = aggregates.visibleCards
+    val creditCards = visibleCards.filter { it.accountKind == AccountKind.CREDIT_CARD }
+    val bankAccounts = visibleCards.filter { it.accountKind == AccountKind.BANK_ACCOUNT }
+    val personCards = aggregates.customerAgg.personSummaries
+    val savingsCustomers = aggregates.savingsCustomers
 
     LazyColumn(
         modifier = modifier
@@ -107,11 +78,12 @@ fun AccountsScreen(
         item {
             PageHeader(
                 title = "Accounts",
-                subtitle = "Monitor banks, credit cards, dues, and usage."
+                subtitle = "Monitor banks, credit cards, dues, and usage.",
+                trailing = {}
             )
         }
 
-        if (cards.isEmpty()) {
+        if (visibleCards.isEmpty()) {
             item {
                 Box(modifier = Modifier.height(420.dp)) {
                     EmptyState(
@@ -159,14 +131,12 @@ fun AccountsScreen(
                     Spacer(modifier = Modifier.height(4.dp))
                     AccountSectionTitle("Persons")
                 }
-                items(personCards, key = { "person_${it.accountId}" }) { entry ->
-                    PersonAccountRow(name = entry.name, usedAmount = entry.used, dueAmount = entry.due)
+                items(personCards, key = { "person_${it.personId}" }) { entry ->
+                    PersonAccountRow(name = entry.personName, usedAmount = entry.totalUsed, dueAmount = entry.totalDue)
                 }
             }
 
             // Savings section — customers who have a positive savings balance
-            val savingsCustomers = customers.filter { it.savingsBalance > 0.0 }
-                .sortedByDescending { it.savingsBalance }
             if (savingsCustomers.isNotEmpty()) {
                 item {
                     Spacer(modifier = Modifier.height(4.dp))
@@ -188,7 +158,7 @@ fun AccountListRow(
     var showBalance by remember { mutableStateOf(true) }
     FlowCard(
         accentColor = accountAccent(card.accountKind),
-        modifier = Modifier.clickable(onClick = onClick)
+        modifier = Modifier.bounceClick(onClick = onClick)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -250,7 +220,7 @@ private fun PersonAccountRow(
 ) {
     val accent = accountAccent(AccountKind.PERSON)
     var showBalance by remember { mutableStateOf(true) }
-    FlowCard(accentColor = accent) {
+    FlowCard(accentColor = accent, modifier = Modifier.bounceClick { }) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -302,7 +272,7 @@ private fun SavingsAccountRow(customer: com.radafiq.data.models.CustomerSummary)
         .filter { it.bankAccountName.isNotBlank() }
         .maxByOrNull { it.date }?.bankAccountName
 
-    FlowCard(accentColor = accent) {
+    FlowCard(accentColor = accent, modifier = Modifier.bounceClick { }) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -317,7 +287,7 @@ private fun SavingsAccountRow(customer: com.radafiq.data.models.CustomerSummary)
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = if (latestBankName != null) "🏦 $latestBankName" else "Savings",
+                    text = if (latestBankName != null) latestBankName else "Savings",
                     style = MaterialTheme.typography.bodySmall,
                     color = accent,
                     modifier = Modifier.padding(top = 2.dp)
@@ -549,7 +519,7 @@ fun CreditCardDueStatus(card: CardSummary) {
     }
 
     Spacer(modifier = Modifier.height(16.dp))
-    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.42f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.42f))
 
     Column(modifier = Modifier.padding(top = 12.dp)) {
         AdaptiveHeaderRow(
@@ -605,7 +575,7 @@ fun CreditCardDueStatus(card: CardSummary) {
         Spacer(modifier = Modifier.height(12.dp))
 
         LinearProgressIndicator(
-            progress = progress,
+            progress = { progress },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(6.dp)
@@ -742,7 +712,8 @@ fun CreditCardDueDialog(
                     }
                     Switch(
                         checked = remindersEnabled,
-                        onCheckedChange = { remindersEnabled = it }
+                        onCheckedChange = { remindersEnabled = it },
+                        colors = radafiqSwitchColors()
                     )
                 }
                 if (remindersEnabled) {
@@ -858,6 +829,7 @@ fun AccountDetailScreen(
                             Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Back")
                         }
                     },
+                    actions = {},
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
                 )
             }

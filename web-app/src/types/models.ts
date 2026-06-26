@@ -114,6 +114,18 @@ export interface CustomerTransaction {
   isSplit?: boolean;
 }
 
+/** Parse YYYY-MM-DD as local midnight (timezone-safe, matching Android's LocalDate) */
+export function parseLocalDate(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** Today as a local-date-only (start-of-day), matching Android's LocalDate.now() */
+export function localToday(): Date {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
 export function isEmi(t: CustomerTransaction): boolean {
   return t.emiGroupId !== '';
 }
@@ -122,9 +134,9 @@ export function isSplit(t: CustomerTransaction): boolean {
   return t.splitGroupId !== '';
 }
 
-export function isScheduledForFutureMonth(t: CustomerTransaction, referenceDate: Date = new Date()): boolean {
+export function isScheduledForFutureMonth(t: CustomerTransaction, referenceDate: Date = localToday()): boolean {
   if (!isEmi(t)) return false;
-  const installmentDate = new Date(t.transactionDate);
+  const installmentDate = parseLocalDate(t.transactionDate);
   if (isNaN(installmentDate.getTime())) return false;
   const refYear = referenceDate.getFullYear();
   const refMonth = referenceDate.getMonth();
@@ -138,41 +150,37 @@ export function isScheduledForFutureMonth(t: CustomerTransaction, referenceDate:
  *
  * Rules:
  * - Non-EMI transactions are always visible.
- * - EMI installments are visible when ANY of these is true:
- *   1. The transaction date is in the current month or past (original behaviour).
- *   2. The due date is within the next 20 days (show upcoming dues early).
+ * - EMI installments are visible when the effective date (dueDate - 20 days for EMIs,
+ *   or transactionDate for non-EMI) has reached or passed today.
+ *
+ * Matches Android's CustomerTransaction.isVisibleInTransactions() which uses the
+ * adjusted transactionDate getter (dueDate - 20 days for EMIs).
  */
-export function isVisibleInTransactions(t: CustomerTransaction, referenceDate: Date = new Date()): boolean {
+export function isVisibleInTransactions(t: CustomerTransaction, referenceDate: Date = localToday()): boolean {
   if (!isEmi(t)) return true;
 
-  // Rule 1: transaction date is current month or past
-  if (!isScheduledForFutureMonth(t, referenceDate)) return true;
+  // Match Android's CustomerTransaction.transactionDate getter:
+  // for EMIs with a dueDate, use dueDate - 20 days instead of the stored date
+  const baseDate = t.dueDate ? parseLocalDate(t.dueDate) : parseLocalDate(t.transactionDate);
+  if (isNaN(baseDate.getTime())) return true;
 
-  // Rule 2: due date is within 20 days from today
-  if (t.dueDate) {
-    const due = new Date(t.dueDate);
-    if (!isNaN(due.getTime())) {
-      const msIn20Days = 20 * 24 * 60 * 60 * 1000;
-      if (due.getTime() - referenceDate.getTime() <= msIn20Days) return true;
-    }
-  }
-
-  return false;
+  const effectiveDate = new Date(baseDate.getTime() - 20 * 24 * 60 * 60 * 1000);
+  return effectiveDate <= referenceDate;
 }
 
 /** Returns true if the EMI installment's due date has passed and it is not settled. */
-export function isEmiOverdue(t: CustomerTransaction, referenceDate: Date = new Date()): boolean {
+export function isEmiOverdue(t: CustomerTransaction, referenceDate: Date = localToday()): boolean {
   if (!isEmi(t) || t.isSettled) return false;
   if (!t.dueDate) return false;
-  const due = new Date(t.dueDate);
+  const due = parseLocalDate(t.dueDate);
   if (isNaN(due.getTime())) return false;
   return due < referenceDate;
 }
 
 /** Returns the number of days until (positive) or since (negative) the due date. */
-export function daysUntilDue(t: CustomerTransaction, referenceDate: Date = new Date()): number | null {
+export function daysUntilDue(t: CustomerTransaction, referenceDate: Date = localToday()): number | null {
   if (!t.dueDate) return null;
-  const due = new Date(t.dueDate);
+  const due = parseLocalDate(t.dueDate);
   if (isNaN(due.getTime())) return null;
   const diffMs = due.getTime() - referenceDate.getTime();
   return Math.ceil(diffMs / (24 * 60 * 60 * 1000));

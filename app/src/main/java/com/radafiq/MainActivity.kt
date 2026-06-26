@@ -8,10 +8,30 @@ import android.os.Bundle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -22,8 +42,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
@@ -32,10 +55,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount
-import com.google.android.gms.common.api.ApiException
-import com.radafiq.data.auth.GoogleSignInHelper
+import com.radafiq.data.auth.CredentialManagerHelper
 import com.radafiq.data.auth.LocalIdentityRepository
 import com.radafiq.data.backup.BackupJsonSerializer
 import com.radafiq.data.backup.DriveBackupRepository
@@ -59,10 +79,15 @@ import com.radafiq.ui.DashboardScreen
 import com.radafiq.ui.ProfileSetupScreen
 import com.radafiq.ui.SecuritySetupScreen
 import com.radafiq.ui.SettingsScreen
+import com.radafiq.ui.ShimmerLoadingScreen
 import com.radafiq.viewmodel.MainViewModel
+import com.radafiq.data.ConnectivityMonitor
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -75,6 +100,7 @@ class MainActivity : FragmentActivity() {
     ) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
@@ -93,8 +119,9 @@ class MainActivity : FragmentActivity() {
         val mainViewModel: MainViewModel = viewModel()
         val biometricAuthManager = remember { BiometricAuthManager() }
         val navController = rememberNavController()
+        val activityContext = LocalContext.current
 
-        // Wire auto-backup â€” runs 10s after any data change if user is signed in to Google
+        // Wire auto-backup — runs 10s after any data change if user is signed in to Google
         LaunchedEffect(mainViewModel) {
             mainViewModel.initAutoBackup(
                 context = applicationContext,
@@ -110,6 +137,10 @@ class MainActivity : FragmentActivity() {
         val profileState by profileRepository.state.collectAsState()
         val cards by mainViewModel.cards.collectAsState()
 
+        // Connectivity monitor for offline banner
+        val connectivityMonitor = remember { ConnectivityMonitor(applicationContext) }
+        val isOnline by connectivityMonitor.isOnline.collectAsState(initial = true)
+
         var backupStatusMessage by rememberSaveable { mutableStateOf("") }
         var backupOperationInProgress by rememberSaveable { mutableStateOf(false) }
         var lockErrorMessage by rememberSaveable { mutableStateOf("") }
@@ -117,8 +148,18 @@ class MainActivity : FragmentActivity() {
         // recreation (e.g. during long-screenshot save) so the lock screen isn't
         // shown again until the app is intentionally background-locked.
         var sessionUnlocked by rememberSaveable { mutableStateOf(false) }
+        var pendingExplicitLock by rememberSaveable { mutableStateOf(false) }
         LaunchedEffect(securityState.isUnlocked) {
-            if (securityState.isUnlocked) sessionUnlocked = true
+            if (securityState.isUnlocked) {
+                sessionUnlocked = true
+                pendingExplicitLock = false
+            }
+        }
+
+        val onLock: () -> Unit = {
+            securityRepository.lock()
+            sessionUnlocked = false
+            pendingExplicitLock = true
         }
 
         // Google Drive backup state
@@ -135,91 +176,54 @@ class MainActivity : FragmentActivity() {
         var loginRestoreInProgress by rememberSaveable { mutableStateOf(false) }
         // Error message shown on the profile setup screen (e.g. sign-in failed)
         var profileSignInErrorMessage by remember { mutableStateOf("") }
-        val profileGoogleSignInLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.StartActivityForResult()
-        ) { result ->
-            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-            try {
-                val account = task.getResult(ApiException::class.java)
-                val name = account.displayName.orEmpty()
-                val email = account.email.orEmpty()
-                val photo = account.photoUrl?.toString().orEmpty()
-                // BUG-04: Validate that email is non-null/non-blank before proceeding
+        suspend fun signInWithGoogle(onSuccess: suspend (CredentialManagerHelper.SignInResult) -> Unit) {
+            profileGoogleSignInInProgress = true
+            profileSignInErrorMessage = ""
+            val result = CredentialManagerHelper.signIn(activityContext)
+            result.onSuccess { signInResult ->
+                val email = signInResult.email
                 if (email.isBlank()) {
-                    android.util.Log.w("MainActivity", "Google Sign-In returned account with blank email â€” aborting")
+                    android.util.Log.w("MainActivity", "Credential Manager returned blank email")
                     profileGoogleSignInInProgress = false
                     profileSignInErrorMessage = "Sign-in returned no email address. Please try again."
-                    return@rememberLauncherForActivityResult
+                    return@onSuccess
                 }
                 profileSignInErrorMessage = ""
                 loginRestoreInProgress = true
                 profileGoogleSignInInProgress = false
-                coroutineScope.launch {
-                    // 1. Sign into Firebase Auth â€” get real UID
-                    val firebaseUid = GoogleSignInHelper.signInToFirebase(account)
-                    if (!firebaseUid.isNullOrBlank()) {
-                        LocalIdentityRepository.setIdentityFromFirebaseUid(firebaseUid, applicationContext)
-                    } else {
-                        profileSignInErrorMessage =
-                            "Google sign-in could not connect to Firebase. Please install a build signed with a registered SHA-1 certificate."
-                        pendingProfileCallback = null
-                        loginRestoreInProgress = false
-                        return@launch
-                    }
 
-                    // 2. Reinitialize data layer with new identity
-                    settingsRepository.reloadForCurrentUser()
-                    mainViewModel.reinitialize()
-                    profileRepository.observeCurrentUserProfile()
-
-                    // 3. Save profile (callback runs after identity is set)
-                    pendingProfileCallback?.invoke(name, "", email, photo)
+                val firebaseUid = signInResult.firebaseUid
+                if (!firebaseUid.isNullOrBlank()) {
+                    LocalIdentityRepository.setIdentityFromFirebaseUid(firebaseUid, applicationContext)
+                } else {
+                    profileSignInErrorMessage =
+                        "Google sign-in could not connect to Firebase. Please install a build signed with a registered SHA-1 certificate."
                     pendingProfileCallback = null
-
-                    // 4. Restore from Drive
-                    val restoreResult = runCatching {
-                        withTimeout(60_000L) {
-                            val token = GoogleSignInHelper.fetchAccessToken(applicationContext, account)
-                            val json = withContext(Dispatchers.IO) {
-                                driveBackupRepository.downloadLatestBackup(token).getOrThrow()
-                            }
-                            mainViewModel.restoreFromJson(
-                                json = json,
-                                profileRepo = profileRepository,
-                                settingsRepo = settingsRepository,
-                                securityRepo = securityRepository
-                            )
-                        }
-                    }
-                    // No backup is fine on first login; other restore errors are shown.
-                    restoreResult.onFailure { e ->
-                        val message = e.localizedMessage.orEmpty()
-                        if (!message.contains("No Google Drive backup", ignoreCase = true)) {
-                            profileSignInErrorMessage =
-                                "Signed in, but Drive restore failed: ${message.ifBlank { "network timeout" }}"
-                        }
-                    }
                     loginRestoreInProgress = false
+                    return@onSuccess
                 }
-            } catch (e: ApiException) {
-                android.util.Log.w("SignIn", "Google Sign-In failed: code ${e.statusCode}", e)
 
-                // DEVELOPER_ERROR (code 10) means this build's signing certificate
-                // is not registered in Firebase, so Firebase Auth cannot return the
-                // UID that owns the user's Firestore data.
+                settingsRepository.reloadForCurrentUser()
+                mainViewModel.reinitialize()
+                profileRepository.observeCurrentUserProfile()
+
+                onSuccess(signInResult)
+                loginRestoreInProgress = false
+            }.onFailure { e ->
                 profileGoogleSignInInProgress = false
                 loginRestoreInProgress = false
                 pendingProfileCallback = null
-                val msg = when (e.statusCode) {
-                    com.google.android.gms.common.api.CommonStatusCodes.CANCELED,
-                    12501 -> "" // user cancelled â€” no error shown
-                    com.google.android.gms.common.api.CommonStatusCodes.NETWORK_ERROR,
-                    7 -> "Network error. Check your internet connection and try again."
-                    10 -> "Google sign-in failed because this app build is not registered in Firebase. Add the APK signing SHA-1 to Firebase, download google-services.json again, and rebuild."
-                    else -> "Sign-in failed (code ${e.statusCode}). Please try again."
+                val message = e.localizedMessage.orEmpty()
+                profileSignInErrorMessage = when {
+                    message.contains("CANCELLED", ignoreCase = true) ||
+                    message.contains("CANCELED", ignoreCase = true) -> ""
+                    message.contains("INTERRUPTED", ignoreCase = true) -> ""
+                    message.contains("NETWORK", ignoreCase = true) ||
+                    message.contains("TIMEOUT", ignoreCase = true) ||
+                    message.contains("TIME_OUT", ignoreCase = true) ->
+                        "Network error. Check your internet connection and try again."
+                    else -> "Sign-in failed: ${message.ifBlank { "unknown error" }}"
                 }
-                profileSignInErrorMessage = msg
-                driveStatusMessage = if (msg.isNotBlank()) msg else driveStatusMessage
             }
         }
 
@@ -253,8 +257,7 @@ class MainActivity : FragmentActivity() {
             if (keepUnlocked) securityRepository.unlock()
         }
 
-        // Auto-restore from Drive after Google Sign-In is now handled directly
-        // in profileGoogleSignInLauncher via mainViewModel.restoreFromJson()
+        // Auto-restore from Drive is handled in signInWithGoogle() via mainViewModel.restoreFromJson()
 
         fun exportBackupToFile(uri: Uri) {
             coroutineScope.launch {
@@ -307,14 +310,13 @@ class MainActivity : FragmentActivity() {
 
         // â”€â”€ Google Drive helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-        suspend fun performDriveBackup(account: GoogleSignInAccount) {
+        suspend fun performDriveBackup(token: String) {
             driveOperationInProgress = true
             driveStatusMessage = "Uploading to Google Drive..."
             mainViewModel.updateDriveOperationMessage("Backing up to Google Drive...")
             try {
                 driveStatusMessage = runCatching {
                     withTimeout(60_000L) {
-                        val token = GoogleSignInHelper.fetchAccessToken(applicationContext, account)
                         withContext(Dispatchers.IO) {
                             val payload = mainViewModel.exportBackup(
                                 profile = profileRepository.exportProfileMap(),
@@ -336,7 +338,7 @@ class MainActivity : FragmentActivity() {
             }
         }
 
-        suspend fun performDriveRestore(account: GoogleSignInAccount) {
+        suspend fun performDriveRestore(token: String) {
             val keepUnlocked = securityState.isUnlocked
             driveOperationInProgress = true
             driveStatusMessage = "Downloading from Google Drive..."
@@ -345,7 +347,6 @@ class MainActivity : FragmentActivity() {
                 // Step 1: download JSON with a timeout â€” this is the network-bound part
                 val json = runCatching {
                     withTimeout(60_000L) {
-                        val token = GoogleSignInHelper.fetchAccessToken(applicationContext, account)
                         withContext(Dispatchers.IO) {
                             driveBackupRepository.downloadLatestBackup(token).getOrThrow()
                         }
@@ -374,74 +375,50 @@ class MainActivity : FragmentActivity() {
             }
         }
 
-        val googleSignInLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.StartActivityForResult()
-        ) { result ->
-            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-            val requestedDriveAction = pendingDriveAction
-            coroutineScope.launch {
-                try {
-                    val account = task.getResult(ApiException::class.java)
-                    when (requestedDriveAction) {
-                        "backup" -> performDriveBackup(account)
-                        "restore" -> performDriveRestore(account)
-                        else -> {
-                            driveOperationInProgress = false
-                            mainViewModel.finishDriveOperation()
-                        }
-                    }
-                } catch (e: ApiException) {
-                    driveStatusMessage = "Google Sign-In failed (code ${e.statusCode})."
-                    driveOperationInProgress = false
-                    mainViewModel.finishDriveOperation()
-                } finally {
-                    pendingDriveAction = ""
-                }
-            }
-        }
-
         fun launchDriveAction(action: String) {
-            val existingDriveMessage = mainViewModel.driveOperationMessage.value
-            if (driveOperationInProgress || pendingDriveAction.isNotBlank() || !existingDriveMessage.isNullOrBlank()) {
-                if (!existingDriveMessage.isNullOrBlank()) {
-                    driveStatusMessage = existingDriveMessage
-                }
+            if (driveOperationInProgress || pendingDriveAction.isNotBlank()) {
                 return
             }
             pendingDriveAction = action
             driveOperationInProgress = true
-            driveStatusMessage = if (action == "backup") {
-                "Preparing Google Drive backup..."
-            } else {
-                "Preparing Google Drive restore..."
-            }
-            mainViewModel.beginDriveOperation(
-                if (action == "backup") {
-                    "Preparing Google Drive backup..."
-                } else {
-                    "Preparing Google Drive restore..."
-                }
-            )
-            val cached = GoogleSignInHelper.getSignedInAccount(applicationContext)
-            if (cached != null) {
-                coroutineScope.launch {
-                    try {
+            val msg = if (action == "backup") "Preparing Google Drive backup..." else "Preparing Google Drive restore..."
+            driveStatusMessage = msg
+            mainViewModel.beginDriveOperation(msg)
+            coroutineScope.launch {
+                try {
+                    val token = CredentialManagerHelper.fetchDriveToken(applicationContext)
+                    if (token != null) {
                         when (action) {
-                            "backup" -> performDriveBackup(cached)
-                            "restore" -> performDriveRestore(cached)
-                            else -> {
-                                driveOperationInProgress = false
-                                mainViewModel.finishDriveOperation()
-                            }
+                            "backup" -> performDriveBackup(token)
+                            "restore" -> performDriveRestore(token)
                         }
-                    } finally {
-                        pendingDriveAction = ""
+                    } else {
+                        // No Google account on device — try signing in interactively
+                        val signInResult = CredentialManagerHelper.signIn(activityContext)
+                        signInResult.onSuccess { result ->
+                            if (!result.firebaseUid.isNullOrBlank()) {
+                                LocalIdentityRepository.setIdentityFromFirebaseUid(result.firebaseUid, applicationContext)
+                                settingsRepository.reloadForCurrentUser()
+                                mainViewModel.reinitialize()
+                                profileRepository.observeCurrentUserProfile()
+                            }
+                            val driveToken = CredentialManagerHelper.fetchDriveToken(applicationContext, result.email)
+                            if (driveToken != null) {
+                                when (action) {
+                                    "backup" -> performDriveBackup(driveToken)
+                                    "restore" -> performDriveRestore(driveToken)
+                                }
+                            } else {
+                                driveStatusMessage = "Could not obtain Drive access. Please sign in with Google again."
+                            }
+                        }.onFailure { e ->
+                            driveStatusMessage = "Sign-in cancelled or failed: ${e.localizedMessage ?: "unknown error"}"
+                        }
                     }
-                }
-            } else {
-                // Sign out first to force account picker and avoid stale state
-                GoogleSignInHelper.buildClient(applicationContext).signOut().addOnCompleteListener {
-                    googleSignInLauncher.launch(GoogleSignInHelper.signInIntent(applicationContext))
+                } finally {
+                    pendingDriveAction = ""
+                    driveOperationInProgress = false
+                    mainViewModel.finishDriveOperation()
                 }
             }
         }
@@ -521,24 +498,96 @@ class MainActivity : FragmentActivity() {
             !securityState.hasPasscode
         val requiresUnlock = profileState.isLoading.not() &&
             profile?.isProfileComplete == true &&
-            securityState.lockEnabled &&
             securityState.hasPasscode &&
-            !sessionUnlocked
+            (pendingExplicitLock || (securityState.lockEnabled && (!sessionUnlocked || !securityState.isUnlocked)))
+
+        // Snackbar state for showing transient messages
+        val snackbarHostState = remember { SnackbarHostState() }
+
+        // Function to show snackbar messages
+        val showSnackbar = { message: String ->
+            coroutineScope.launch {
+                snackbarHostState.showSnackbar(message = message)
+            }
+        }
 
         RadafiqTheme(themeMode = settingsState.themeMode) {
-            when {
-                profileState.isLoading -> {
-                    RadafiqBackground {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator()
-                        }
+            Scaffold(
+                snackbarHost = {
+                    SnackbarHost(
+                        hostState = snackbarHostState
+                    )
+                }
+            ) { padding ->
+                // Persistent offline banner at the top
+                if (!isOnline) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.error)
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "You're offline. Some features may be unavailable.",
+                            color = MaterialTheme.colorScheme.onError,
+                            style = MaterialTheme.typography.labelMedium
+                        )
                     }
                 }
 
-                needsProfileSetup -> {
+                var loadingStartTime by remember { mutableStateOf(0L) }
+                var animationReady by remember { mutableStateOf(true) }
+
+                LaunchedEffect(profileState.isLoading) {
+                    if (profileState.isLoading) {
+                        loadingStartTime = System.nanoTime()
+                        animationReady = false
+                    }
+                }
+
+                LaunchedEffect(profileState.isLoading) {
+                    if (!profileState.isLoading && loadingStartTime > 0L) {
+                        val elapsedNs = System.nanoTime() - loadingStartTime
+                        val animationDurationNs = 600_000_000L // 600ms minimum — just enough to feel intentional
+                        if (elapsedNs < animationDurationNs) {
+                            delay((animationDurationNs - elapsedNs) / 1_000_000)
+                        }
+                        animationReady = true
+                    }
+                }
+
+                val screenKey = when {
+                    profileState.isLoading || !animationReady -> "loading"
+                    needsProfileSetup -> "profileSetup"
+                    needsSecuritySetup -> "securitySetup"
+                    requiresUnlock -> "lock"
+                    else -> "main"
+                }
+
+                AnimatedContent(
+                    targetState = screenKey,
+                    transitionSpec = {
+                        fadeIn(tween(300)) togetherWith fadeOut(tween(200))
+                    },
+                    label = "rootTransition"
+                ) { currentScreen ->
+                    when (currentScreen) {
+                        "loading" -> {
+                            RadafiqBackground {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(padding)
+                                        .consumeWindowInsets(insets = WindowInsets.systemBars),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    ShimmerLoadingScreen()
+                                }
+                            }
+                        }
+
+                "profileSetup" -> {
                     ProfileSetupScreen(
                         profile = profile,
                         onSave = { displayName, businessName, email, photoUrl ->
@@ -550,25 +599,44 @@ class MainActivity : FragmentActivity() {
                                 }
                             }
                         },
-                        onSignInWithGoogle = {
-                            profileSignInErrorMessage = ""
-                            profileGoogleSignInInProgress = true
-                            pendingProfileCallback = { name, _, email, photo ->
-                                coroutineScope.launch {
-                                    try {
-                                        profileRepository.saveProfile(name, profile?.businessName.orEmpty(), email, photo)
-                                    } catch (e: Exception) {
-                                        android.util.Log.e("SignIn", "Profile save after sign-in failed", e)
+                            onSignInWithGoogle = {
+                            coroutineScope.launch {
+                                pendingProfileCallback = { name, _, email, photo ->
+                                    coroutineScope.launch {
+                                        try {
+                                            profileRepository.saveProfile(name, profile?.businessName.orEmpty(), email, photo)
+                                        } catch (e: Exception) {
+                                            android.util.Log.e("SignIn", "Profile save after sign-in failed", e)
+                                        }
+                                    }
+                                }
+                                signInWithGoogle { signInResult ->
+                                    // Restore from Drive after sign-in
+                                    val token = CredentialManagerHelper.fetchDriveToken(applicationContext, signInResult.email)
+                                    if (token != null) {
+                                        val restoreResult = runCatching {
+                                            withTimeout(60_000L) {
+                                                val json = withContext(Dispatchers.IO) {
+                                                    driveBackupRepository.downloadLatestBackup(token).getOrThrow()
+                                                }
+                                                mainViewModel.restoreFromJson(
+                                                    json = json,
+                                                    profileRepo = profileRepository,
+                                                    settingsRepo = settingsRepository,
+                                                    securityRepo = securityRepository
+                                                )
+                                            }
+                                        }
+                                        restoreResult.onFailure { e ->
+                                            val message = e.localizedMessage.orEmpty()
+                                            if (!message.contains("No Google Drive backup", ignoreCase = true)) {
+                                                profileSignInErrorMessage =
+                                                    "Signed in, but Drive restore failed: ${message.ifBlank { "network timeout" }}"
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            // Launch directly â€” the Google sign-in chooser always shows the
-                            // account picker on a fresh install. The old signOut().addOnCompleteListener
-                            // pattern could silently stall if the GMS task completed synchronously
-                            // before the listener was registered, leaving the button stuck.
-                            profileGoogleSignInLauncher.launch(
-                                GoogleSignInHelper.signInIntent(applicationContext, requestIdToken = true)
-                            )
                         },
                         googleSignInInProgress = profileGoogleSignInInProgress || loginRestoreInProgress,
                         loginRestoreInProgress = loginRestoreInProgress,
@@ -576,7 +644,7 @@ class MainActivity : FragmentActivity() {
                     )
                 }
 
-                needsSecuritySetup -> {
+                "securitySetup" -> {
                     SecuritySetupScreen(
                         biometricAvailable = biometricAvailable,
                         initialRecoveryQuestion = profile?.email?.takeIf { it.isNotBlank() }?.let {
@@ -594,7 +662,7 @@ class MainActivity : FragmentActivity() {
                     )
                 }
 
-                requiresUnlock -> {
+                "lock" -> {
                     AppLockScreen(
                         biometricAvailable = biometricAvailable,
                         biometricEnabled = securityState.biometricEnabled && biometricAvailable,
@@ -661,9 +729,15 @@ class MainActivity : FragmentActivity() {
                     )
                 }
 
-                else -> {
+                "main" -> {
                     NavHost(navController = navController, startDestination = "dashboard") {
-                        composable("dashboard") {
+                        composable(
+                            "dashboard",
+                            enterTransition = { fadeIn(tween(300)) },
+                            exitTransition = { fadeOut(tween(200)) },
+                            popEnterTransition = { fadeIn(tween(300)) },
+                            popExitTransition = { fadeOut(tween(200)) }
+                        ) {
                             DashboardScreen(
                                 navController = navController,
                                 selectedAccountIds = settingsState.selectedAccountIds,
@@ -718,14 +792,15 @@ class MainActivity : FragmentActivity() {
                                 onLogout = {
                                     coroutineScope.launch {
                                         profileRepository.signOut()
-                                        GoogleSignInHelper.signOut(applicationContext)
+                                        CredentialManagerHelper.signOut()
                                         LocalIdentityRepository.resetIdentity(applicationContext)
                                         settingsRepository.reloadForCurrentUser()
                                         mainViewModel.reinitialize()
                                         profileRepository.observeCurrentUserProfile()
-                                        navController.popBackStack()
+                                        navController.popBackStack("dashboard", false)
                                     }
                                 },
+                                onLock = onLock,
                                 onOpenCustomer = { customerId ->
                                     navController.navigate("customerDetail/$customerId")
                                 },
@@ -735,7 +810,13 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        composable("addTransaction") {
+                        composable(
+                            "addTransaction",
+                            enterTransition = { fadeIn(tween(300)) + slideInVertically(tween(300)) { it } },
+                            exitTransition = { fadeOut(tween(200)) + slideOutVertically(tween(200)) { it } },
+                            popEnterTransition = { fadeIn(tween(300)) + slideInVertically(tween(300)) { -it } },
+                            popExitTransition = { fadeOut(tween(200)) + slideOutVertically(tween(200)) { -it } }
+                        ) {
                             AddTransactionScreen(
                                 onNavigateBack = { navController.popBackStack() },
                                 onCustomerAdded = { customerId ->
@@ -746,15 +827,26 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        composable("addPayment") {
+                        composable(
+                            "addPayment",
+                            enterTransition = { fadeIn(tween(300)) + slideInVertically(tween(300)) { it } },
+                            exitTransition = { fadeOut(tween(200)) + slideOutVertically(tween(200)) { it } },
+                            popEnterTransition = { fadeIn(tween(300)) + slideInVertically(tween(300)) { -it } },
+                            popExitTransition = { fadeOut(tween(200)) + slideOutVertically(tween(200)) { -it } }
+                        ) {
                             AddPaymentScreen(
-                                selectedAccountIds = settingsState.selectedAccountIds
-                            ) {
-                                navController.popBackStack()
-                            }
+                                selectedAccountIds = settingsState.selectedAccountIds,
+                                onNavigateBack = { navController.popBackStack() },
+                            )
                         }
 
-                        composable("customerDetail/{customerId}") { backStackEntry ->
+                        composable(
+                            "customerDetail/{customerId}",
+                            enterTransition = { fadeIn(tween(300)) },
+                            exitTransition = { fadeOut(tween(200)) },
+                            popEnterTransition = { fadeIn(tween(300)) },
+                            popExitTransition = { fadeOut(tween(200)) }
+                        ) { backStackEntry ->
                             val customerId = backStackEntry.arguments?.getString("customerId").orEmpty()
                             CustomerDetailScreen(
                                 customerId = customerId,
@@ -765,7 +857,13 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        composable("customerSavings/{customerId}") { backStackEntry ->
+                        composable(
+                            "customerSavings/{customerId}",
+                            enterTransition = { fadeIn(tween(300)) },
+                            exitTransition = { fadeOut(tween(200)) },
+                            popEnterTransition = { fadeIn(tween(300)) },
+                            popExitTransition = { fadeOut(tween(200)) }
+                        ) { backStackEntry ->
                             val customerId = backStackEntry.arguments?.getString("customerId").orEmpty()
                             CustomerSavingsScreen(
                                 customerId = customerId,
@@ -774,7 +872,13 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        composable("accountDetail/{accountId}") { backStackEntry ->
+                        composable(
+                            "accountDetail/{accountId}",
+                            enterTransition = { fadeIn(tween(300)) },
+                            exitTransition = { fadeOut(tween(200)) },
+                            popEnterTransition = { fadeIn(tween(300)) },
+                            popExitTransition = { fadeOut(tween(200)) }
+                        ) { backStackEntry ->
                             val accountId = backStackEntry.arguments?.getString("accountId").orEmpty()
                             AccountDetailScreen(
                                 accountId = accountId,
@@ -786,7 +890,13 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        composable("profile") {
+                        composable(
+                            "profile",
+                            enterTransition = { fadeIn(tween(300)) },
+                            exitTransition = { fadeOut(tween(200)) },
+                            popEnterTransition = { fadeIn(tween(300)) },
+                            popExitTransition = { fadeOut(tween(200)) }
+                        ) {
                             ProfileSetupScreen(
                                 profile = profile,
                                 onSave = { displayName, businessName, email, photoUrl ->
@@ -800,20 +910,41 @@ class MainActivity : FragmentActivity() {
                                     }
                                 },
                                 onSignInWithGoogle = {
-                                    profileSignInErrorMessage = ""
-                                    profileGoogleSignInInProgress = true
-                                    pendingProfileCallback = { name, _, email, photo ->
-                                        coroutineScope.launch {
-                                            try {
-                                                profileRepository.saveProfile(name, profile?.businessName.orEmpty(), email, photo)
-                                            } catch (e: Exception) {
-                                                android.util.Log.e("SignIn", "Profile save after sign-in failed", e)
+                                    coroutineScope.launch {
+                                        pendingProfileCallback = { name, _, email, photo ->
+                                            coroutineScope.launch {
+                                                try {
+                                                    profileRepository.saveProfile(name, profile?.businessName.orEmpty(), email, photo)
+                                                } catch (e: Exception) {
+                                                    android.util.Log.e("SignIn", "Profile save after sign-in failed", e)
+                                                }
+                                            }
+                                        }
+                                        signInWithGoogle { signInResult ->
+                                            // Restore from Drive after sign-in (same as login flow)
+                                            val token = CredentialManagerHelper.fetchDriveToken(applicationContext, signInResult.email)
+                                            if (token != null) {
+                                                runCatching {
+                                                    withTimeout(60_000L) {
+                                                        val json = withContext(Dispatchers.IO) {
+                                                            driveBackupRepository.downloadLatestBackup(token).getOrThrow()
+                                                        }
+                                                        mainViewModel.restoreFromJson(
+                                                            json = json,
+                                                            profileRepo = profileRepository,
+                                                            settingsRepo = settingsRepository,
+                                                            securityRepo = securityRepository
+                                                        )
+                                                    }
+                                                }.onFailure { e ->
+                                                    val message = e.localizedMessage.orEmpty()
+                                                    if (!message.contains("No Google Drive backup", ignoreCase = true)) {
+                                                        android.util.Log.w("ProfileSignIn", "Drive restore after profile sign-in failed: $message")
+                                                    }
+                                                }
                                             }
                                         }
                                     }
-                                    profileGoogleSignInLauncher.launch(
-                                        GoogleSignInHelper.signInIntent(applicationContext, requestIdToken = true)
-                                    )
                                 },
                                 googleSignInInProgress = profileGoogleSignInInProgress || loginRestoreInProgress,
                                 loginRestoreInProgress = loginRestoreInProgress,
@@ -821,7 +952,13 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        composable("securitySetup") {
+                        composable(
+                            "securitySetup",
+                            enterTransition = { fadeIn(tween(300)) },
+                            exitTransition = { fadeOut(tween(200)) },
+                            popEnterTransition = { fadeIn(tween(300)) },
+                            popExitTransition = { fadeOut(tween(200)) }
+                        ) {
                             if (securityState.hasPasscode) {
                                 ChangePasscodeScreen(
                                     biometricAvailable = biometricAvailable,
@@ -845,7 +982,7 @@ class MainActivity : FragmentActivity() {
                             } else {
                                 SecuritySetupScreen(
                                     biometricAvailable = biometricAvailable,
-                                    initialRecoveryQuestion = profile?.email?.takeIf { it.isNotBlank() }?.let {
+                        initialRecoveryQuestion = profile?.email?.takeIf { it.isNotBlank() }?.let {
                                         "What is your email ID?"
                                     }.orEmpty(),
                                     onSave = { passcode, recoveryQuestion, recoveryAnswer, enableBiometric ->
@@ -862,7 +999,13 @@ class MainActivity : FragmentActivity() {
                             }
                         }
 
-                        composable("settings") {
+                        composable(
+                            "settings",
+                            enterTransition = { fadeIn(tween(300)) },
+                            exitTransition = { fadeOut(tween(200)) },
+                            popEnterTransition = { fadeIn(tween(300)) },
+                            popExitTransition = { fadeOut(tween(200)) }
+                        ) {
                             SettingsScreen(
                                 settingsState = settingsState,
                                 profile = profile,
@@ -912,16 +1055,17 @@ class MainActivity : FragmentActivity() {
                                 onLogout = {
                                     coroutineScope.launch {
                                         profileRepository.signOut()
-                                        GoogleSignInHelper.signOut(applicationContext)
+                                        CredentialManagerHelper.signOut()
                                         LocalIdentityRepository.resetIdentity(applicationContext)
                                         settingsRepository.reloadForCurrentUser()
                                         mainViewModel.reinitialize()
                                         profileRepository.observeCurrentUserProfile()
-                                        navController.popBackStack()
+                                        navController.popBackStack("dashboard", false)
                                     }
-                                }
+                                },
+                                onLock = onLock
                             ) {
-                                navController.popBackStack()
+                                navController.popBackStack("dashboard", false)
                             }
                         }
                     }
@@ -929,6 +1073,8 @@ class MainActivity : FragmentActivity() {
             }
         }
     }
+    }
+}
 
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return

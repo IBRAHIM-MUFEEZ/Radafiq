@@ -14,4 +14,16 @@
         <item name="android:windowIsTranslucent">false</item>
         <item name="android:windowAnimationStyle">@null</item>
     </style>
+
+    <!--
+        Splash screen theme — uses the core-splashscreen compat library so the
+        system draws an instant first frame while the app process starts.
+        The splash auto-exits into Theme.Radafiq when installSplashScreen()
+        signals readiness in MainActivity.
+    -->
+    <style name="Theme.Radafiq.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/bg_dark</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/Theme.Radafiq</item>
+    </style>
 </resources>

@@ -1,11 +1,83 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { ArrowLeft, Plus, Minus, Trash2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { formatMoney, formatDate } from '../utils/format';
+import { formatMoney, formatDate, todayString } from '../utils/format';
 import { SavingsEntry, BANK_ACCOUNTS } from '../types/models';
 import AnimatedMoney from '../components/AnimatedMoney';
-import { fadeInUp, staggerFadeInUp } from '../utils/animations';
+import AnimatedAvatar from '../components/AnimatedAvatar';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.06, delayChildren: 0.1 },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 16 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' as const } },
+};
+
+function SavingsOverview({ customers, navigate }: { customers: import('../types/models').CustomerSummary[]; navigate: ReturnType<typeof useNavigate> }) {
+  const savers = useMemo(() =>
+    customers.filter(c => c.savingsBalance > 0)
+      .sort((a, b) => b.savingsBalance - a.savingsBalance),
+    [customers]
+  );
+
+  return (
+    <motion.div
+      className="page-content"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
+      <motion.div variants={itemVariants}>
+        <h2 style={{ marginBottom: 4 }}>Savings</h2>
+        <p className="text-muted text-sm" style={{ marginBottom: '1rem' }}>
+          {savers.length} customer{savers.length !== 1 ? 's' : ''} with savings
+        </p>
+      </motion.div>
+
+      {savers.length === 0 ? (
+        <motion.div className="empty-state" variants={itemVariants}>
+          <div className="empty-state-icon">🐷</div>
+          <h3>No savings yet</h3>
+          <p>Record deposits from a customer's detail page to track their savings.</p>
+        </motion.div>
+      ) : (
+        savers.map(c => (
+          <motion.div
+            key={c.id}
+            className="flow-card"
+            style={{ cursor: 'pointer', marginBottom: '0.75rem' }}
+            onClick={() => navigate(`/customers/${c.id}/savings`)}
+            variants={itemVariants}
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.99 }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <AnimatedAvatar name={c.name} size={44} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="truncate font-semibold" style={{ fontSize: '1rem' }}>{c.name}</div>
+                <div className="text-muted text-sm">{c.savingsEntries.length} savings entr{c.savingsEntries.length === 1 ? 'y' : 'ies'}</div>
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--primary)' }}>
+                  <AnimatedMoney value={c.savingsBalance} />
+                </div>
+                <div className="text-muted text-xs">Savings</div>
+              </div>
+            </div>
+          </motion.div>
+        ))
+      )}
+    </motion.div>
+  );
+}
 
 export default function SavingsPage() {
   const { customerId } = useParams<{ customerId: string }>();
@@ -14,13 +86,21 @@ export default function SavingsPage() {
   const pageRef = useRef<HTMLDivElement>(null);
   const balanceRef = useRef<HTMLDivElement>(null);
 
+  // If no customerId — show overview
+  if (!customerId) {
+    return <SavingsOverview customers={customers} navigate={navigate} />;
+  }
+
   const customer = customers.find(c => c.id === customerId);
   const [showDeposit, setShowDeposit] = useState(false);
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
+  const [date, setDate] = useState(todayString());
   const [bankAccountId, setBankAccountId] = useState('');
   const [bankAccountName, setBankAccountName] = useState('');
+  const [withdrawBankAccountId, setWithdrawBankAccountId] = useState('');
+  const [withdrawBankAccountName, setWithdrawBankAccountName] = useState('');
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<SavingsEntry | null>(null);
 
@@ -39,18 +119,13 @@ export default function SavingsPage() {
     );
   }
 
-  useEffect(() => {
-    if (pageRef.current) fadeInUp(pageRef.current, 0, 400);
-    if (balanceRef.current) fadeInUp(balanceRef.current, 100, 500);
-    staggerFadeInUp('.savings-card', 60, 'first', 400);
-  }, [customer.id]);
-
   const totalDeposited = customer.savingsEntries.filter(e => e.type === 'deposit').reduce((s, e) => s + e.amount, 0);
   const totalWithdrawn = customer.savingsEntries.filter(e => e.type === 'withdrawal').reduce((s, e) => s + e.amount, 0);
 
   // Compute per-bank-account breakdown of deposits
   const bankBreakdown = useMemo(() => {
-    const map = new Map<string, { name: string; deposited: number; withdrawn: number }>();
+    type Acct = { id: string; name: string; deposited: number; withdrawn: number };
+    const map = new Map<string, Acct>();
     customer.savingsEntries.forEach(e => {
       if (!e.bankAccountId) return;
       const existing = map.get(e.bankAccountId);
@@ -59,6 +134,7 @@ export default function SavingsPage() {
         else existing.withdrawn += e.amount;
       } else {
         map.set(e.bankAccountId, {
+          id: e.bankAccountId,
           name: e.bankAccountName || e.bankAccountId,
           deposited: e.type === 'deposit' ? e.amount : 0,
           withdrawn: e.type === 'withdrawal' ? e.amount : 0,
@@ -74,6 +150,7 @@ export default function SavingsPage() {
   const openDeposit = () => {
     setAmount('');
     setNote('');
+    setDate(todayString());
     // Pre-select first available bank account
     const first = availableBankAccounts[0];
     setBankAccountId(first?.id ?? '');
@@ -81,9 +158,19 @@ export default function SavingsPage() {
     setShowDeposit(true);
   };
 
+  // Withdrawable accounts = bank accounts with positive net balance
+  const withdrawableAccounts = useMemo(() =>
+    bankBreakdown.filter(b => b.balance > 0),
+    [bankBreakdown]
+  );
+
   const openWithdraw = () => {
     setAmount('');
     setNote('');
+    setDate(todayString());
+    const first = withdrawableAccounts[0];
+    setWithdrawBankAccountId(first?.id ?? '');
+    setWithdrawBankAccountName(first?.name ?? '');
     setShowWithdraw(true);
   };
 
@@ -91,18 +178,26 @@ export default function SavingsPage() {
     if (!amount || parseFloat(amount) <= 0) return;
     setSaving(true);
     try {
-      await addSavingsDeposit(customer.id, customer.name, amount, note, bankAccountId, bankAccountName);
+      await addSavingsDeposit(customer.id, customer.name, amount, note, bankAccountId, bankAccountName, date);
       setShowDeposit(false);
     } finally {
       setSaving(false);
     }
   };
 
+  const selectedWithdrawBalance = useMemo(() => {
+    if (!withdrawBankAccountId) return 0;
+    const acct = bankBreakdown.find(b => b.id === withdrawBankAccountId);
+    return acct?.balance ?? 0;
+  }, [withdrawBankAccountId, bankBreakdown]);
+
   const handleWithdraw = async () => {
     if (!amount || parseFloat(amount) <= 0) return;
+    const maxAmount = withdrawableAccounts.length > 0 ? selectedWithdrawBalance : customer.savingsBalance;
+    if (parseFloat(amount) > maxAmount) return;
     setSaving(true);
     try {
-      await addSavingsWithdrawal(customer.id, customer.name, amount, note);
+      await addSavingsWithdrawal(customer.id, customer.name, amount, note, withdrawBankAccountId, withdrawBankAccountName, date);
       setShowWithdraw(false);
     } finally {
       setSaving(false);
@@ -110,13 +205,21 @@ export default function SavingsPage() {
   };
 
   return (
-    <div className="page-content" ref={pageRef}>
-      <button className="btn btn-ghost" style={{ marginBottom: '1rem' }} onClick={() => navigate(`/customers/${customer.id}`)}>
-        <ArrowLeft size={18} /> {customer.name}
-      </button>
+    <motion.div
+      className="page-content"
+      ref={pageRef}
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
+      <motion.div variants={itemVariants}>
+        <button className="btn btn-ghost" style={{ marginBottom: '1rem' }} onClick={() => navigate(`/customers/${customer.id}`)}>
+          <ArrowLeft size={18} /> {customer.name}
+        </button>
+      </motion.div>
 
       {/* Balance card */}
-      <div className="flow-card" style={{ marginBottom: '1rem' }} ref={balanceRef}>
+      <motion.div className="flow-card" style={{ marginBottom: '1rem' }} ref={balanceRef} variants={itemVariants}>
         <p className="text-muted text-xs" style={{ textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
           Available Balance
         </p>
@@ -142,7 +245,7 @@ export default function SavingsPage() {
         {bankBreakdown.length > 0 && (
           <div style={{ marginBottom: '1.25rem' }}>
             <p style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-              Held In
+              Per Account
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {bankBreakdown.map(b => (
@@ -159,7 +262,10 @@ export default function SavingsPage() {
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--secondary)', flexShrink: 0 }} />
                     <div>
                       <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text)' }}>{b.name}</div>
-                      <div style={{ fontSize: '0.6875rem', color: 'var(--secondary)' }}>Bank Account</div>
+                      <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
+                        Dep. <AnimatedMoney value={b.deposited} />
+                        {b.withdrawn > 0 && <> | Wd. <AnimatedMoney value={b.withdrawn} /></>}
+                      </div>
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
@@ -167,7 +273,7 @@ export default function SavingsPage() {
                       <AnimatedMoney value={b.balance} />
                     </div>
                     <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
-                      Dep. <AnimatedMoney value={b.deposited} />
+                      available
                     </div>
                   </div>
                 </div>
@@ -189,25 +295,34 @@ export default function SavingsPage() {
             <Minus size={16} /> Withdraw
           </button>
         </div>
-      </div>
+      </motion.div>
 
       {/* History */}
-      <h3 style={{ marginBottom: '0.75rem', textTransform: 'uppercase', fontSize: '0.75rem', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
-        History
-      </h3>
+      <motion.div variants={itemVariants}>
+        <h3 style={{ marginBottom: '0.75rem', textTransform: 'uppercase', fontSize: '0.75rem', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+          History
+        </h3>
+      </motion.div>
 
       {customer.savingsEntries.length === 0 ? (
-        <div className="empty-state">
+        <motion.div className="empty-state" variants={itemVariants}>
           <div className="empty-state-icon">🐷</div>
           <h3>No savings yet</h3>
           <p>Tap Deposit to record the first deposit for {customer.name}.</p>
-        </div>
+        </motion.div>
       ) : (
-        customer.savingsEntries.map(entry => {
+        customer.savingsEntries.map((entry, i) => {
           const isDeposit = entry.type === 'deposit';
           const accentColor = isDeposit ? 'var(--primary)' : 'var(--warning)';
           return (
-            <div key={entry.id} className="flow-card savings-card" style={{ '--card-accent': accentColor, marginBottom: '0.75rem' } as React.CSSProperties}>
+            <motion.div
+              key={entry.id}
+              className="flow-card"
+              style={{ '--card-accent': accentColor, marginBottom: '0.75rem' } as React.CSSProperties}
+              variants={itemVariants}
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.99 }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{
                   width: 36, height: 36, borderRadius: '50%',
@@ -252,7 +367,7 @@ export default function SavingsPage() {
                   <Trash2 size={14} />
                 </button>
               </div>
-            </div>
+            </motion.div>
           );
         })
       )}
@@ -272,6 +387,15 @@ export default function SavingsPage() {
                   onChange={e => setAmount(e.target.value)}
                   placeholder="0.00"
                   autoFocus
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Date</label>
+                <input
+                  className="form-input"
+                  type="date"
+                  value={date}
+                  onChange={e => setDate(e.target.value)}
                 />
               </div>
               <div className="form-group">
@@ -329,17 +453,57 @@ export default function SavingsPage() {
         <div className="modal-overlay" onClick={() => setShowWithdraw(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h3 className="modal-title">Withdraw</h3>
-            <p className="modal-subtitle">Available: {formatMoney(customer.savingsBalance)}</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem', marginBottom: '1rem' }}>
+              {withdrawableAccounts.length > 0 ? (
+                <div className="form-group">
+                  <label className="form-label">Bank Account</label>
+                  <select
+                    className="form-select"
+                    value={withdrawBankAccountId}
+                    onChange={e => {
+                      const acct = withdrawableAccounts.find(a => a.id === e.target.value);
+                      setWithdrawBankAccountId(e.target.value);
+                      setWithdrawBankAccountName(acct?.name ?? '');
+                      setAmount('');
+                    }}
+                  >
+                    {withdrawableAccounts.map(a => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} — {formatMoney(a.balance)} available
+                      </option>
+                    ))}
+                  </select>
+                  {withdrawBankAccountId && (
+                    <p className="text-xs" style={{ color: 'var(--text-muted)', marginTop: 4 }}>
+                      Available: {formatMoney(selectedWithdrawBalance)}
+                    </p>
+                  )}
+                </div>
+              ) : customer.savingsBalance > 0 ? (
+                <p className="text-muted text-sm" style={{ marginBottom: 8 }}>
+                  Available: {formatMoney(customer.savingsBalance)}
+                </p>
+              ) : (
+                <p className="text-muted text-sm">No accounts available for withdrawal</p>
+              )}
               <div className="form-group">
                 <label className="form-label">Amount</label>
                 <input
-                  className={`form-input${amount && parseFloat(amount) > customer.savingsBalance ? ' error' : ''}`}
+                  className={`form-input${amount && parseFloat(amount) > (withdrawableAccounts.length > 0 ? selectedWithdrawBalance : customer.savingsBalance) ? ' error' : ''}`}
                   type="number"
                   value={amount}
                   onChange={e => setAmount(e.target.value)}
                   placeholder="0.00"
                   autoFocus
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Date</label>
+                <input
+                  className="form-input"
+                  type="date"
+                  value={date}
+                  onChange={e => setDate(e.target.value)}
                 />
               </div>
               <div className="form-group">
@@ -358,7 +522,13 @@ export default function SavingsPage() {
                 className="btn"
                 style={{ background: 'var(--warning)', color: 'white' }}
                 onClick={handleWithdraw}
-                disabled={saving || !amount || parseFloat(amount) <= 0 || parseFloat(amount) > customer.savingsBalance}
+                disabled={
+                  saving ||
+                  !amount ||
+                  parseFloat(amount) <= 0 ||
+                  parseFloat(amount) > (withdrawableAccounts.length > 0 ? selectedWithdrawBalance : customer.savingsBalance) ||
+                  (withdrawableAccounts.length > 0 && !withdrawBankAccountId)
+                }
               >
                 {saving ? 'Saving...' : 'Withdraw'}
               </button>
@@ -387,6 +557,6 @@ export default function SavingsPage() {
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import type { CustomerSummary, CustomerTransaction } from '../types/models';
+import type { CustomerSummary, CustomerTransaction, SettlementHistoryEntry, SavingsEntry } from '../types/models';
 
 // ── Font helper ───────────────────────────────────────────────────────────────
 const FONT_FAMILY = 'helvetica' as const;
@@ -452,10 +452,11 @@ function drawEmiSchedule(
   t: Theme,
   emiTxns: CustomerTransaction[],
   pw: number,
-  startY: number
+  startY: number,
+  checkPb: (y: number, needed: number) => number
 ): number {
-  startY = drawSectionHeader(doc, t, 'EMI Schedule', pw, startY);
-  startY += 2;
+  let y = drawSectionHeader(doc, t, 'EMI Schedule', pw, startY);
+  y += 2;
 
   const grouped = new Map<string, CustomerTransaction[]>();
   emiTxns.forEach(tx => {
@@ -467,31 +468,41 @@ function drawEmiSchedule(
     const sorted = [...txns].sort((a, b) => a.emiIndex - b.emiIndex);
     const first  = sorted[0];
 
+    // Check if this entire EMI group (header + all rows + spacing) fits
+    const groupHeaderH = 5;
+    const rowH = 5;
+    const groupSpacing = 3;
+    const groupHeight = groupHeaderH + sorted.length * rowH + groupSpacing;
+    y = checkPb(y, groupHeight);
+
     setFont(doc, 'bold');
     doc.setFontSize(7.5);
     setTextColor(doc, TEAL);
     // Strip any em-dash variants from the name to avoid encoding issues
     const groupName = first.name.replace(/ [-\u2013\u2014] EMI.*/i, '');
-    doc.text(`${groupName} - ${sorted.length} instalments`, 14, startY);
-    startY += 5;
+    doc.text(`${groupName} - ${sorted.length} instalments`, 14, y);
+    y += 5;
 
     sorted.forEach(tx => {
+      // Check before each individual row to prevent mid-group overflow
+      y = checkPb(y, rowH);
+
       const dotColor: RGB = tx.isSettled ? GREEN_BRAND : ORANGE_PENDING;
       setFill(doc, dotColor);
-      doc.circle(18, startY - 1.5, 1.2, 'F');
+      doc.circle(18, y - 1.5, 1.2, 'F');
 
       setFont(doc, 'normal');
       doc.setFontSize(7);
       setTextColor(doc, t.TEXT_MUTED);
-      doc.text(`EMI ${tx.emiIndex + 1}/${tx.emiTotal}`, 22, startY);
-      doc.text(tx.transactionDate, 55, startY);
-      doc.text(pdfMoney(tx.amount), pw - 14, startY, { align: 'right' });
-      startY += 5;
+      doc.text(`EMI ${tx.emiIndex + 1}/${tx.emiTotal}`, 22, y);
+      doc.text(tx.transactionDate, 55, y);
+      doc.text(pdfMoney(tx.amount), pw - 14, y, { align: 'right' });
+      y += 5;
     });
-    startY += 3;
+    y += 3;
   });
 
-  return startY;
+  return y;
 }
 
 // ── Footer ────────────────────────────────────────────────────────────────────
@@ -522,7 +533,9 @@ function drawFooter(
 export function generateAndDownloadStatement(
   customer: CustomerSummary,
   generatedByName: string = 'Radafiq User',
-  isDark: boolean = false
+  isDark: boolean = false,
+  settlementHistory?: (SettlementHistoryEntry & { transactionName: string })[],
+  savingsEntries?: SavingsEntry[]
 ): void {
   const t   = getTheme(isDark);
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
@@ -564,7 +577,7 @@ export function generateAndDownloadStatement(
   y = drawDuesOverview(doc, t, customer, pw, y);
   y += 5;
 
-  // Transactions
+  // Build ordered groups for rendering
   const visible = customer.transactions
     .filter(tx => {
       if (!tx.emiGroupId) return true;
@@ -575,39 +588,177 @@ export function generateAndDownloadStatement(
     })
     .sort((a, b) => b.transactionDate.localeCompare(a.transactionDate) || b.amount - a.amount);
 
-  if (visible.length > 0) {
-    y = checkPageBreak(y, 20);
-    y = drawSectionHeader(doc, t, 'Transactions', pw, y);
-    y += 2;
-
-    const splitMap     = new Map<string, CustomerTransaction[]>();
-    const orderedGroups: CustomerTransaction[][] = [];
-    visible.forEach(tx => {
-      if (tx.splitGroupId) {
-        if (!splitMap.has(tx.splitGroupId)) {
-          splitMap.set(tx.splitGroupId, []);
-          orderedGroups.push(splitMap.get(tx.splitGroupId)!);
-        }
-        splitMap.get(tx.splitGroupId)!.push(tx);
-      } else {
-        orderedGroups.push([tx]);
+  const splitMap     = new Map<string, CustomerTransaction[]>();
+  const orderedGroups: CustomerTransaction[][] = [];
+  visible.forEach(tx => {
+    if (tx.splitGroupId) {
+      if (!splitMap.has(tx.splitGroupId)) {
+        splitMap.set(tx.splitGroupId, []);
+        orderedGroups.push(splitMap.get(tx.splitGroupId)!);
       }
-    });
-
-    for (const group of orderedGroups) {
-      y = checkPageBreak(y, 18);
-      y = group.length > 1
-        ? drawSplitRow(doc, t, group, pw, y)
-        : drawTransactionRow(doc, t, group[0], pw, y);
+      splitMap.get(tx.splitGroupId)!.push(tx);
+    } else {
+      orderedGroups.push([tx]);
     }
+  });
+
+  const settledGroups   = orderedGroups.filter(g => g.every(t2 => t2.isSettled));
+  const unsettledGroups = orderedGroups.filter(g => !g.every(t2 => t2.isSettled));
+
+  function drawGroupList(groups: CustomerTransaction[][], startY: number): number {
+    let yy = startY;
+    for (const group of groups) {
+      yy = checkPageBreak(yy, 18);
+      yy = group.length > 1
+        ? drawSplitRow(doc, t, group, pw, yy)
+        : drawTransactionRow(doc, t, group[0], pw, yy);
+    }
+    return yy;
+  }
+
+  // Settled transactions
+  if (settledGroups.length > 0) {
+    y = checkPageBreak(y, 20);
+    y = drawSectionHeader(doc, t, `Settled Transactions (${settledGroups.length})`, pw, y);
+    y += 2;
+    y = drawGroupList(settledGroups, y);
+    y += 4;
+  }
+
+  // Unsettled transactions
+  if (unsettledGroups.length > 0) {
+    y = checkPageBreak(y, 20);
+    y = drawSectionHeader(doc, t, `Unsettled Transactions (${unsettledGroups.length})`, pw, y);
+    y += 2;
+    y = drawGroupList(unsettledGroups, y);
+    y += 4;
   }
 
   // EMI schedule
   const emiTxns = customer.transactions.filter(tx => tx.emiGroupId);
   if (emiTxns.length > 0) {
-    y = checkPageBreak(y, 30);
     y += 5;
-    y = drawEmiSchedule(doc, t, emiTxns, pw, y);
+    y = drawEmiSchedule(doc, t, emiTxns, pw, y, checkPageBreak);
+  }
+
+  // Settlement history
+  if (settlementHistory && settlementHistory.length > 0) {
+    y += 5;
+    y = checkPageBreak(y, 20);
+    y = drawSectionHeader(doc, t, 'Settlement History', pw, y);
+    y += 2;
+
+    const sortedHistory = [...settlementHistory].sort((a, b) => b.timestamp - a.timestamp);
+    for (const entry of sortedHistory) {
+      y = checkPageBreak(y, 14);
+      const rowH  = 14;
+      const left  = 14;
+      const right = pw - 14;
+
+      const entryColor: RGB = entry.type === 'settled'
+        ? GREEN_BRAND
+        : entry.type === 'partial'
+        ? ORANGE_PENDING
+        : RED_ACCENT;
+
+      roundedRect(doc, left, y, right - left, rowH, 2.5, t.BG_RAISED);
+      setFill(doc, entryColor);
+      doc.rect(left, y, 1.5, rowH, 'F');
+
+      setFont(doc, 'normal');
+      doc.setFontSize(6);
+      setTextColor(doc, t.TEXT_MUTED);
+      doc.text(entry.date, left + 4, y + 5.5);
+
+      setFont(doc, 'bold');
+      doc.setFontSize(7.5);
+      setTextColor(doc, t.TEXT_PRIMARY);
+      const maxNameW = right - left - 90;
+      const histName = doc.splitTextToSize(entry.transactionName, maxNameW)[0] as string;
+      doc.text(histName, left + 30, y + 5.5);
+
+      setFont(doc, 'normal');
+      doc.setFontSize(6);
+      setTextColor(doc, t.TEXT_MUTED);
+      const typeLabel = entry.type === 'settled' ? 'Settled'
+        : entry.type === 'partial' ? 'Partial'
+        : 'Unpaid';
+      doc.text(typeLabel, left + 30, y + 10.5);
+
+      setFont(doc, 'bold');
+      doc.setFontSize(8);
+      setTextColor(doc, entryColor);
+      doc.text(pdfMoney(entry.amount), right - 4, y + 5.5, { align: 'right' });
+
+      setDraw(doc, t.OUTLINE);
+      doc.setLineWidth(0.2);
+      doc.line(left, y + rowH, right, y + rowH);
+
+      y += rowH + 1.5;
+    }
+    y += 4;
+  }
+
+  // Savings details
+  if (savingsEntries && savingsEntries.length > 0) {
+    const sorted = [...savingsEntries].sort((a, b) => b.date.localeCompare(a.date));
+    const totalDeposits = sorted.filter(s => s.type === 'deposit').reduce((s, e) => s + e.amount, 0);
+    const totalWithdrawals = sorted.filter(s => s.type === 'withdrawal').reduce((s, e) => s + e.amount, 0);
+    const netSavings = totalDeposits - totalWithdrawals;
+
+    y += 5;
+    y = checkPageBreak(y, 20);
+    y = drawSectionHeader(doc, t, 'Savings Details', pw, y);
+    y += 2;
+
+    y = drawMetricBoxRow(doc, t, [
+      { label: 'Total Deposits',  value: pdfMoney(totalDeposits),   color: GREEN_BRAND },
+      { label: 'Total Withdrawn', value: pdfMoney(totalWithdrawals), color: ORANGE_PENDING },
+      { label: 'Net Savings',     value: pdfMoney(netSavings),      color: netSavings >= 0 ? GREEN_BRAND : RED_ACCENT },
+    ], pw, y);
+    y += 4;
+
+    for (const entry of sorted) {
+      y = checkPageBreak(y, 14);
+      const rowH  = 14;
+      const left  = 14;
+      const right = pw - 14;
+
+      const isDeposit = entry.type === 'deposit';
+      const entryColor: RGB = isDeposit ? GREEN_BRAND : RED_ACCENT;
+
+      roundedRect(doc, left, y, right - left, rowH, 2.5, t.BG_RAISED);
+      setFill(doc, entryColor);
+      doc.rect(left, y, 1.5, rowH, 'F');
+
+      setFont(doc, 'normal');
+      doc.setFontSize(6);
+      setTextColor(doc, t.TEXT_MUTED);
+      doc.text(entry.date, left + 4, y + 5.5);
+
+      setFont(doc, 'bold');
+      doc.setFontSize(7.5);
+      setTextColor(doc, t.TEXT_PRIMARY);
+      doc.text(isDeposit ? 'Deposit' : 'Withdrawal', left + 30, y + 5.5);
+
+      setFont(doc, 'normal');
+      doc.setFontSize(6);
+      setTextColor(doc, t.TEXT_MUTED);
+      const noteMaxW = right - left - 90;
+      const note = entry.note ? doc.splitTextToSize(entry.note, noteMaxW)[0] as string : '';
+      if (note) doc.text(note, left + 30, y + 10.5);
+
+      setFont(doc, 'bold');
+      doc.setFontSize(8);
+      setTextColor(doc, entryColor);
+      doc.text(pdfMoney(entry.amount), right - 4, y + 5.5, { align: 'right' });
+
+      setDraw(doc, t.OUTLINE);
+      doc.setLineWidth(0.2);
+      doc.line(left, y + rowH, right, y + rowH);
+
+      y += rowH + 1.5;
+    }
   }
 
   drawFooter(doc, t, pageNum, ph, pw, generatedByName);

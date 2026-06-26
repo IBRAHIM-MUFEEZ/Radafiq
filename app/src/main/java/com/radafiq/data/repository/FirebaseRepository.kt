@@ -18,6 +18,7 @@ import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.QuerySnapshot
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.Source
 import java.time.Instant
@@ -580,8 +581,33 @@ class FirebaseRepository(
         )
     }
 
+    private suspend fun snapshotExistingData(): FirestoreBackupPayload {
+        val toRecords: (QuerySnapshot) -> List<BackupRecord> = { snap ->
+            snap.documents.map { doc ->
+                BackupRecord(id = doc.id, fields = doc.data ?: emptyMap())
+            }
+        }
+        return FirestoreBackupPayload(
+            exportedAt = "",
+            profile = emptyMap(),
+            settings = emptyMap(),
+            customers = toRecords(customersCollection().get().await()),
+            accounts = toRecords(accountsCollection().get().await()),
+            transactions = toRecords(transactionsCollection().get().await()),
+            payments = toRecords(paymentsCollection().get().await()),
+            savings = toRecords(savingsCollection().get().await())
+        )
+    }
+
     suspend fun restoreBackup(payload: FirestoreBackupPayload) {
-        restoreBackupAsync(payload).forEach { task -> task.await() }
+        val saved = snapshotExistingData()
+        try {
+            restoreBackupAsync(payload).forEach { task -> task.await() }
+        } catch (e: Exception) {
+            android.util.Log.w("FirebaseRepository", "restoreBackup failed, rolling back", e)
+            restoreBackupAsync(saved).forEach { task -> task.await() }
+            throw e
+        }
     }
 
     fun restoreBackupAsync(payload: FirestoreBackupPayload): List<Task<Void>> {
@@ -904,7 +930,7 @@ class FirebaseRepository(
         val sortedSavings = savingsEntries.sortedByDescending { it.date }
         val savingsBalance = sortedSavings.sumOf {
             if (it.type == SavingsType.DEPOSIT) it.amount else -it.amount
-        }.coerceAtLeast(0.0)
+        }
         return CustomerSummary(
             id = id,
             name = name,
@@ -913,7 +939,7 @@ class FirebaseRepository(
             manualPaidAmount = manualPaidAmount,
             settledTransactionAmount = settledTransactionAmount,
             partialPaidAmount = totalPartialPaid,
-            balance = (totalAmount - customerPaidAmount).coerceAtLeast(0.0),
+            balance = totalAmount - customerPaidAmount,
             transactions = transactions.sortedWith(
                 compareByDescending<CustomerTransaction> { it.transactionDate }
                     .thenByDescending { it.id }

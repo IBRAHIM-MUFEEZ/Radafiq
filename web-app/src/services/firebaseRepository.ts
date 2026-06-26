@@ -29,6 +29,9 @@ import {
   FirestoreBackupPayload,
   BackupRecord,
   accountKindFromStorage,
+  isVisibleInTransactions,
+  localToday,
+  parseLocalDate,
 } from '../types/models';
 
 type SavingsType = 'deposit' | 'withdrawal';
@@ -118,7 +121,7 @@ function buildAppData(
   paymentDocs: DocumentSnapshot[],
   savingsDocs: DocumentSnapshot[]
 ): { accounts: CardSummary[]; customers: CustomerSummary[]; deletedCustomers: CustomerSummary[] } {
-  const today = new Date();
+  const today = localToday();
 
   // Build transactions map
   const allTransactions: CustomerTransaction[] = transactionDocs.map(d => {
@@ -208,48 +211,40 @@ function buildAppData(
 
   // Compute customer balances
   customerMap.forEach(customer => {
-    const visibleTxns = customer.transactions.filter(t => {
+    // Match Android's buildAppData: totalAmount/settledAmount use isFutureScheduledEmi
+    // (effectiveDate = dueDate - 20 days); partialPaidAmount uses isVisibleInTransactions.
+    const totalsTxns = customer.transactions.filter(t => {
       if (!t.emiGroupId) return true;
-      const d = new Date(t.transactionDate);
-      if (isNaN(d.getTime())) return true;
-      const refYear = today.getFullYear();
-      const refMonth = today.getMonth();
-      // Future month by transaction date
-      if (d.getFullYear() > refYear || (d.getFullYear() === refYear && d.getMonth() > refMonth)) {
-        // But show if due date is within 20 days
-        if (t.dueDate) {
-          const due = new Date(t.dueDate);
-          if (!isNaN(due.getTime())) {
-            const msIn20Days = 20 * 24 * 60 * 60 * 1000;
-            if (due.getTime() - today.getTime() <= msIn20Days) return true;
-          }
-        }
-        return false;
-      }
-      return true;
+      const baseDate = t.dueDate ? parseLocalDate(t.dueDate) : parseLocalDate(t.transactionDate);
+      if (isNaN(baseDate.getTime())) return true;
+      const effectiveDate = new Date(baseDate.getTime() - 20 * 24 * 60 * 60 * 1000);
+      return effectiveDate <= today;
     });
 
     let totalAmount = 0;
     let settledAmount = 0;
-    let partialAmount = 0;
 
-    visibleTxns.forEach(t => {
+    totalsTxns.forEach(t => {
       totalAmount += t.amount;
       if (t.isSettled) {
         settledAmount += t.amount;
-      } else {
-        partialAmount += t.partialPaidAmount;
       }
     });
 
     customer.totalAmount = totalAmount;
     customer.settledTransactionAmount = settledAmount;
+
+    const visibleTxns = customer.transactions.filter(t => isVisibleInTransactions(t, today));
+    let partialAmount = 0;
+    visibleTxns.filter(t => !t.isSettled).forEach(t => {
+      partialAmount += t.partialPaidAmount;
+    });
     customer.partialPaidAmount = partialAmount;
     customer.manualPaidAmount = customer.creditDueAmount; // raw stored value
     // creditDueAmount = total customer paid = manual + settled + partial (matches Android)
     const customerPaidAmount = customer.creditDueAmount + settledAmount + partialAmount;
     customer.creditDueAmount = customerPaidAmount;
-    customer.balance = Math.max(0, totalAmount - customerPaidAmount);
+    customer.balance = totalAmount - customerPaidAmount;
 
     // Savings balance
     const deposited = customer.savingsEntries
@@ -258,7 +253,7 @@ function buildAppData(
     const withdrawn = customer.savingsEntries
       .filter(s => s.type === 'withdrawal')
       .reduce((sum, s) => sum + s.amount, 0);
-    customer.savingsBalance = Math.max(0, deposited - withdrawn);
+    customer.savingsBalance = deposited - withdrawn;
   });
 
   // Build account summaries
@@ -289,24 +284,11 @@ function buildAppData(
     if (t.accountKind === 'person') return;
 
     if (t.emiGroupId) {
-      // EMI — only count visible (current month and past, or due within 20 days)
-      const d = new Date(t.transactionDate);
-      if (!isNaN(d.getTime())) {
-        const refYear = today.getFullYear();
-        const refMonth = today.getMonth();
-        if (d.getFullYear() > refYear || (d.getFullYear() === refYear && d.getMonth() > refMonth)) {
-          // Future month — skip unless due within 20 days
-          let showEarly = false;
-          if (t.dueDate) {
-            const due = new Date(t.dueDate);
-            if (!isNaN(due.getTime())) {
-              const msIn20Days = 20 * 24 * 60 * 60 * 1000;
-              if (due.getTime() - today.getTime() <= msIn20Days) showEarly = true;
-            }
-          }
-          if (!showEarly) return;
-        }
-      }
+      // Match Android's isFutureScheduledEmi: effectiveDate = dueDate - 20 days
+      const baseDate = t.dueDate ? parseLocalDate(t.dueDate) : parseLocalDate(t.transactionDate);
+      if (isNaN(baseDate.getTime())) return;
+      const effectiveDate = new Date(baseDate.getTime() - 20 * 24 * 60 * 60 * 1000);
+      if (effectiveDate > today) return;
     }
 
     let summary = accountSummaryMap.get(t.accountId);
@@ -377,35 +359,50 @@ export function listenAllData(
     }
   }
 
-  const u1 = onSnapshot(customersCol(uid), snap => {
-    latestCustomers = snap.docs;
-    customersReady = true;
-    notifyIfReady();
-  });
+  const u1 = onSnapshot(customersCol(uid),
+    snap => {
+      latestCustomers = snap.docs;
+      customersReady = true;
+      notifyIfReady();
+    },
+    error => console.error('Customers listener error:', error)
+  );
 
-  const u2 = onSnapshot(accountsCol(uid), snap => {
-    latestAccounts = snap.docs;
-    accountsReady = true;
-    notifyIfReady();
-  });
+  const u2 = onSnapshot(accountsCol(uid),
+    snap => {
+      latestAccounts = snap.docs;
+      accountsReady = true;
+      notifyIfReady();
+    },
+    error => console.error('Accounts listener error:', error)
+  );
 
-  const u3 = onSnapshot(transactionsCol(uid), snap => {
-    latestTransactions = snap.docs;
-    transactionsReady = true;
-    notifyIfReady();
-  });
+  const u3 = onSnapshot(transactionsCol(uid),
+    snap => {
+      latestTransactions = snap.docs;
+      transactionsReady = true;
+      notifyIfReady();
+    },
+    error => console.error('Transactions listener error:', error)
+  );
 
-  const u4 = onSnapshot(paymentsCol(uid), snap => {
-    latestPayments = snap.docs;
-    paymentsReady = true;
-    notifyIfReady();
-  });
+  const u4 = onSnapshot(paymentsCol(uid),
+    snap => {
+      latestPayments = snap.docs;
+      paymentsReady = true;
+      notifyIfReady();
+    },
+    error => console.error('Payments listener error:', error)
+  );
 
-  const u5 = onSnapshot(savingsCol(uid), snap => {
-    latestSavings = snap.docs;
-    savingsReady = true;
-    notifyIfReady();
-  });
+  const u5 = onSnapshot(savingsCol(uid),
+    snap => {
+      latestSavings = snap.docs;
+      savingsReady = true;
+      notifyIfReady();
+    },
+    error => console.error('Savings listener error:', error)
+  );
 
   return [u1, u2, u3, u4, u5];
 }
@@ -799,21 +796,24 @@ export function listenProfile(
     isProfileComplete: boolean;
   } | null) => void
 ): Unsubscribe {
-  return onSnapshot(profileDoc(uid), snap => {
-    if (!snap.exists()) {
-      onResult(null);
-      return;
-    }
-    const data = snap.data();
-    onResult({
-      uid,
-      displayName: (data.displayName as string) ?? '',
-      businessName: (data.businessName as string) ?? '',
-      email: (data.email as string) ?? '',
-      photoUrl: (data.photoUrl as string) ?? '',
-      isProfileComplete: (data.isProfileComplete as boolean) ?? false,
-    });
-  });
+  return onSnapshot(profileDoc(uid),
+    snap => {
+      if (!snap.exists()) {
+        onResult(null);
+        return;
+      }
+      const data = snap.data();
+      onResult({
+        uid,
+        displayName: (data.displayName as string) ?? '',
+        businessName: (data.businessName as string) ?? '',
+        email: (data.email as string) ?? '',
+        photoUrl: (data.photoUrl as string) ?? '',
+        isProfileComplete: (data.isProfileComplete as boolean) ?? false,
+      });
+    },
+    error => console.error('Profile listener error:', error)
+  );
 }
 
 // ── Backup / Restore ──────────────────────────────────────────────────────────
@@ -848,7 +848,7 @@ export async function exportBackup(
 }
 
 export async function restoreBackup(uid: string, payload: FirestoreBackupPayload): Promise<void> {
-  // Delete existing data first
+  // Snapshot existing data before any mutation (for rollback)
   const [customerSnap, accountSnap, txnSnap, paymentSnap, savingsSnap] = await Promise.all([
     getDocs(customersCol(uid)),
     getDocs(accountsCol(uid)),
@@ -856,6 +856,16 @@ export async function restoreBackup(uid: string, payload: FirestoreBackupPayload
     getDocs(paymentsCol(uid)),
     getDocs(savingsCol(uid)),
   ]);
+
+  const toRecords = (snap: QuerySnapshot): BackupRecord[] =>
+    snap.docs.map(d => ({ id: d.id, fields: d.data() as Record<string, unknown> }));
+  const saved = {
+    customers: toRecords(customerSnap),
+    accounts: toRecords(accountSnap),
+    transactions: toRecords(txnSnap),
+    payments: toRecords(paymentSnap),
+    savings: toRecords(savingsSnap),
+  };
 
   const BATCH_SIZE = 400;
 
@@ -867,15 +877,6 @@ export async function restoreBackup(uid: string, payload: FirestoreBackupPayload
     }
   }
 
-  await Promise.all([
-    deleteAll(customerSnap.docs),
-    deleteAll(accountSnap.docs),
-    deleteAll(txnSnap.docs),
-    deleteAll(paymentSnap.docs),
-    deleteAll(savingsSnap.docs),
-  ]);
-
-  // Write new data
   async function writeRecords(col: ReturnType<typeof customersCol>, records: BackupRecord[]) {
     for (let i = 0; i < records.length; i += BATCH_SIZE) {
       const batch = writeBatch(db);
@@ -886,11 +887,33 @@ export async function restoreBackup(uid: string, payload: FirestoreBackupPayload
     }
   }
 
-  await Promise.all([
-    writeRecords(customersCol(uid), payload.customers),
-    writeRecords(accountsCol(uid), payload.accounts),
-    writeRecords(transactionsCol(uid), payload.transactions),
-    writeRecords(paymentsCol(uid), payload.payments),
-    writeRecords(savingsCol(uid), payload.savings),
-  ]);
+  async function restoreExisting() {
+    await writeRecords(customersCol(uid), saved.customers);
+    await writeRecords(accountsCol(uid), saved.accounts);
+    await writeRecords(transactionsCol(uid), saved.transactions);
+    await writeRecords(paymentsCol(uid), saved.payments);
+    await writeRecords(savingsCol(uid), saved.savings);
+  }
+
+  try {
+    await Promise.all([
+      deleteAll(customerSnap.docs),
+      deleteAll(accountSnap.docs),
+      deleteAll(txnSnap.docs),
+      deleteAll(paymentSnap.docs),
+      deleteAll(savingsSnap.docs),
+    ]);
+
+    await Promise.all([
+      writeRecords(customersCol(uid), payload.customers),
+      writeRecords(accountsCol(uid), payload.accounts),
+      writeRecords(transactionsCol(uid), payload.transactions),
+      writeRecords(paymentsCol(uid), payload.payments),
+      writeRecords(savingsCol(uid), payload.savings),
+    ]);
+  } catch (e) {
+    console.error('restoreBackup failed, rolling back:', e);
+    await restoreExisting();
+    throw new Error(`Restore failed and has been rolled back: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }

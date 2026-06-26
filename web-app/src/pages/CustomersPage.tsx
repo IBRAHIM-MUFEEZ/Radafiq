@@ -1,13 +1,26 @@
-import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { Search, Plus, RefreshCw, Trash2, RotateCcw, Settings, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatMoney } from '../utils/format';
 import { CustomerSummary } from '../types/models';
 import AnimatedAvatar from '../components/AnimatedAvatar';
 import AnimatedMoney from '../components/AnimatedMoney';
-import { fadeInUp, staggerFadeInUp } from '../utils/animations';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.06, delayChildren: 0.08 },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 14 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' as const } },
+};
 
 function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; onClick: () => void; index: number }) {
   const txnCount = customer.transactions.length;
@@ -28,7 +41,6 @@ function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; 
   }, []);
 
   const handleClick = useCallback((e: React.MouseEvent) => {
-    // Create a ripple-like effect
     const rect = cardRef.current?.getBoundingClientRect();
     if (rect) {
       setSparkle(true);
@@ -38,9 +50,9 @@ function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; 
   }, [onClick]);
 
   return (
-    <div
+    <motion.div
       ref={cardRef}
-      className={`flow-card tilt-card customer-card`}
+      className="flow-card tilt-card customer-card"
       style={{
         cursor: 'pointer',
         marginBottom: '0.75rem',
@@ -49,9 +61,13 @@ function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; 
         position: 'relative',
         overflow: 'hidden',
       }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay: index * 0.04, duration: 0.35, ease: 'easeOut' }}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onClick={handleClick}
+      whileHover={{ boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }}
     >
       {/* Sparkle overlay */}
       {sparkle && (
@@ -73,6 +89,11 @@ function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; 
               {txnCount > 10 && <Sparkles size={10} style={{ color: 'var(--teal)', opacity: 0.6 }} />}
             </span>
           </div>
+          {customer.savingsBalance > 0 && (
+            <div style={{ color: 'var(--primary)', fontSize: '0.75rem', fontWeight: 600, marginTop: 2 }}>
+              Savings <AnimatedMoney value={customer.savingsBalance} />
+            </div>
+          )}
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
           <div style={{ fontWeight: 700, fontSize: '1.05rem', color: customer.balance > 0 ? 'var(--warning)' : 'var(--primary)' }}>
@@ -81,7 +102,7 @@ function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; 
           <div className="text-muted text-xs">Balance</div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -92,7 +113,14 @@ function DeletedCustomerRow({ customer, onRestore, onDelete, index }: {
   index: number;
 }) {
   return (
-    <div className={`flow-card hover-lift customer-card`} style={{ '--card-accent': 'var(--red)', marginBottom: '0.75rem' } as React.CSSProperties}>
+    <motion.div
+      className="flow-card hover-lift customer-card"
+      style={{ '--card-accent': 'var(--red)', marginBottom: '0.75rem' } as React.CSSProperties}
+      initial={{ opacity: 0, x: -12 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: index * 0.04, duration: 0.3, ease: 'easeOut' }}
+      whileHover={{ y: -2 }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div className="avatar" style={{ background: 'color-mix(in srgb, var(--red) 15%, transparent)', color: 'var(--red)', transition: 'all 0.3s ease' }}>
           {customer.name.slice(0, 2).toUpperCase()}
@@ -110,14 +138,13 @@ function DeletedCustomerRow({ customer, onRestore, onDelete, index }: {
           </button>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
 export default function CustomersPage() {
   const { customers, deletedCustomers, addCustomer, restoreCustomer, permanentlyDeleteCustomer, syncStatus, triggerSync } = useApp();
   const navigate = useNavigate();
-  const pageRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
   const [showRecycleBin, setShowRecycleBin] = useState(false);
@@ -138,11 +165,6 @@ export default function CustomersPage() {
     search ? sorted.filter(c => c.name.toLowerCase().includes(search.toLowerCase())) : sorted,
     [sorted, search]
   );
-
-  useEffect(() => {
-    if (pageRef.current) fadeInUp(pageRef.current, 0, 400);
-    if (listRef.current) staggerFadeInUp('.customer-card', 50, 'first', 400);
-  }, [customers, deletedCustomers, showRecycleBin]);
 
   const letters = useMemo(() => {
     if (search) return [];
@@ -186,9 +208,18 @@ export default function CustomersPage() {
   }, [filtered, search]);
 
   return (
-    <div className="page-content" style={{ position: 'relative' }} ref={pageRef}>
+    <motion.div
+      className="page-content"
+      style={{ position: 'relative' }}
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1rem' }}>
+      <motion.div
+        style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1rem' }}
+        variants={itemVariants}
+      >
         <div>
           <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {showRecycleBin ? 'Recycle Bin' : 'Customers'}
@@ -212,7 +243,7 @@ export default function CustomersPage() {
               {syncStatus.message}
             </span>
           )}
-          <button className="btn btn-ghost btn-ripple" onClick={triggerSync} title="Sync" style={{ borderRadius: '50%', width: 36, height: 36, padding: 0 }}>
+          <button className="btn btn-ghost btn-ripple" onClick={triggerSync} title="Refresh" style={{ borderRadius: '50%', width: 36, height: 36, padding: 0 }}>
             <RefreshCw size={16} className={syncStatus.state === 'SYNCING' ? 'rotating' : ''} />
           </button>
           <button className="btn btn-sm btn-outline btn-ripple" onClick={() => setShowRecycleBin(v => !v)}>
@@ -222,10 +253,10 @@ export default function CustomersPage() {
             <Settings size={16} />
           </button>
         </div>
-      </div>
+      </motion.div>
 
       {/* Search */}
-      <div style={{ position: 'relative', marginBottom: '1rem' }}>
+      <motion.div style={{ position: 'relative', marginBottom: '1rem' }} variants={itemVariants}>
         <Search size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
         <input
           className="form-input"
@@ -234,27 +265,29 @@ export default function CustomersPage() {
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-      </div>
+      </motion.div>
 
       {/* List */}
       {filtered.length === 0 ? (
-        <div className="empty-state">
+        <motion.div className="empty-state" variants={itemVariants}>
           <div className="empty-state-icon">👥</div>
           <h3>{showRecycleBin ? 'Recycle bin is empty' : 'No customers yet'}</h3>
           <p>{showRecycleBin ? 'Deleted customers will appear here.' : 'Tap + to add your first customer ledger.'}</p>
-        </div>
+        </motion.div>
       ) : (
-        // paddingRight no longer needed — alphabet index is portal-rendered outside scroll container
         <div ref={listRef}>
         {grouped.map(({ letter, items }) => (
           <div key={letter || 'all'}>
             {letter && (
-              <div
+              <motion.div
                 ref={el => { letterRefs.current[letter] = el; }}
                 style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--primary)', padding: '4px 0 2px 4px' }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.3 }}
               >
                 {letter}
-              </div>
+              </motion.div>
             )}
             {items.map((customer, idx) => (
               showRecycleBin ? (
@@ -327,7 +360,7 @@ export default function CustomersPage() {
       {/* FAB — also rendered into document.body via portal so it is truly fixed
           to the viewport and never overlaps the customer list */}
       {!showRecycleBin && ReactDOM.createPortal(
-        <button
+        <motion.button
           onClick={() => setShowAddModal(true)}
           style={{
             position: 'fixed',
@@ -346,20 +379,16 @@ export default function CustomersPage() {
             fontWeight: 600,
             cursor: 'pointer',
             boxShadow: '0 4px 20px rgba(99, 102, 241, 0.35)',
-            transition: 'transform 0.15s ease, box-shadow 0.15s ease',
             zIndex: 50,
           }}
-          onMouseEnter={e => {
-            (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-2px)';
-            (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 6px 24px rgba(99, 102, 241, 0.45)';
-          }}
-          onMouseLeave={e => {
-            (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(0)';
-            (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 4px 20px rgba(99, 102, 241, 0.35)';
-          }}
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ delay: 0.3, type: 'spring', stiffness: 400, damping: 20 }}
+          whileHover={{ scale: 1.05, boxShadow: '0 6px 24px rgba(99, 102, 241, 0.45)' }}
+          whileTap={{ scale: 0.95 }}
         >
           <Plus size={18} /> Add Customer
-        </button>,
+        </motion.button>,
         document.body
       )}
 
@@ -413,6 +442,6 @@ export default function CustomersPage() {
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

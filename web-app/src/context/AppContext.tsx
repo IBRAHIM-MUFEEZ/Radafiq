@@ -4,6 +4,7 @@ import { auth, googleProvider } from '../firebase';
 import {
   CardSummary,
   CustomerSummary,
+  SavingsEntry,
   SettlementHistoryEntry,
   UserProfile,
   AppSettings,
@@ -213,8 +214,8 @@ interface AppContextValue {
   addPayment: (accountId: string, accountName: string, accountKind: AccountKind, amount: string) => Promise<void>;
 
   // Savings operations
-  addSavingsDeposit: (customerId: string, customerName: string, amount: string, note: string, bankAccountId?: string, bankAccountName?: string) => Promise<void>;
-  addSavingsWithdrawal: (customerId: string, customerName: string, amount: string, note: string) => Promise<void>;
+  addSavingsDeposit: (customerId: string, customerName: string, amount: string, note: string, bankAccountId?: string, bankAccountName?: string, date?: string) => Promise<void>;
+  addSavingsWithdrawal: (customerId: string, customerName: string, amount: string, note: string, bankAccountId?: string, bankAccountName?: string, date?: string) => Promise<void>;
   deleteSavingsEntry: (entryId: string) => Promise<void>;
 
   // Settlement History
@@ -682,6 +683,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [user]);
 
+  function addMonths(isoDate: string, months: number): string {
+    const [y, m, d] = isoDate.split('-').map(Number);
+    const totalM = y * 12 + (m - 1) + months;
+    let emiYear = Math.floor(totalM / 12);
+    let emiMonth = (totalM % 12) + 1;
+    if (emiMonth <= 0) { emiMonth += 12; emiYear -= 1; }
+    const lastDay = new Date(emiYear, emiMonth, 0).getDate();
+    const emiDay = Math.min(d, lastDay);
+    return `${emiYear}-${String(emiMonth).padStart(2, '0')}-${String(emiDay).padStart(2, '0')}`;
+  }
+
   const addEmiTransactions = useCallback(async (params: {
     customerId: string;
     transactionName: string;
@@ -696,34 +708,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     dateOverrides?: Record<number, string>;
   }) => {
     if (!user || params.months <= 0 || params.totalAmount <= 0) return;
-    const baseDate = new Date(params.transactionDate || todayString());
+    const baseDateIso = params.transactionDate || todayString();
     const baseEmi = params.totalAmount / params.months;
     const firstEmi = params.firstMonthOverride && params.firstMonthOverride > 0 ? params.firstMonthOverride : baseEmi;
     const groupId = crypto.randomUUID();
 
     const instalments = Array.from({ length: params.months }, (_, i) => {
       const emiAmount = i === 0 ? firstEmi : baseEmi;
-      let emiDate: Date;
-      const override = params.dateOverrides?.[i];
-      if (override) {
-        emiDate = new Date(override);
-      } else {
-        emiDate = new Date(baseDate);
-        emiDate.setMonth(emiDate.getMonth() + i);
-      }
-      const dueDate = new Date(emiDate);
-      dueDate.setMonth(dueDate.getMonth() + 1);
+      const emiDateIso = params.dateOverrides?.[i] ?? addMonths(baseDateIso, i);
+      const dueDateIso = addMonths(emiDateIso, 1);
       return {
         customerId: params.customerId,
         transactionName: `${params.transactionName.trim()} — EMI ${i + 1}/${params.months}`,
         accountId: params.accountId,
         accountName: params.accountName,
-        accountType: params.accountKind ?? 'credit_card', // BUG-13 fix: use actual kind
+        accountType: params.accountKind ?? 'credit_card',
         customerName: params.customerName.trim(),
         amount: emiAmount,
-        transactionDate: emiDate.toISOString().split('T')[0],
-        givenDate: emiDate.toISOString().split('T')[0],
-        dueDate: dueDate.toISOString().split('T')[0],
+        transactionDate: emiDateIso,
+        givenDate: emiDateIso,
+        dueDate: dueDateIso,
         emiGroupId: groupId,
         emiIndex: i,
         emiTotal: params.months,
@@ -732,6 +736,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     await repo.addEmiTransactionsBatch(user.uid, instalments);
   }, [user]);
+
+  function slugify(text: string): string {
+    return text.replace(/\s+/g, ' ').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  }
 
   const addSplitTransactions = useCallback(async (params: {
     customerId: string;
@@ -748,9 +756,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const amount = parseFloat(split.amount);
       if (isNaN(amount) || amount <= 0) return [];
       const isPerson = split.accountKind === 'person';
+      const rawName = isPerson ? split.personName : (split.accountName || split.accountId || '');
+      const normalized = rawName.replace(/\s+/g, ' ').trim();
       const accountId = isPerson
-        ? `person_${split.personName.trim().toLowerCase().replace(/\s+/g, '_')}`
-        : split.accountId || split.accountName.trim().toLowerCase().replace(/\s+/g, '_');
+        ? `person_${slugify(normalized)}`
+        : split.accountId || slugify(normalized);
       const accountName = isPerson ? split.personName.trim() : split.accountName.trim();
       if (!accountName) return [];
 
@@ -791,9 +801,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const amount = parseFloat(split.amount);
       if (isNaN(amount) || amount <= 0) return [];
       const isPerson = split.accountKind === 'person';
+      const rawName = isPerson ? split.personName : (split.accountName || split.accountId || '');
+      const normalized = rawName.replace(/\s+/g, ' ').trim();
       const accountId = isPerson
-        ? `person_${split.personName.trim().toLowerCase().replace(/\s+/g, '_')}`
-        : split.accountId || split.accountName.trim().toLowerCase().replace(/\s+/g, '_');
+        ? `person_${slugify(normalized)}`
+        : split.accountId || slugify(normalized);
       const accountName = isPerson ? split.personName.trim() : split.accountName.trim();
       if (!accountName) return [];
 
@@ -910,22 +922,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ── Savings operations ────────────────────────────────────────────────────
 
-  const addSavingsDeposit = useCallback(async (customerId: string, customerName: string, amount: string, note: string, bankAccountId: string = '', bankAccountName: string = '') => {
+  const addSavingsDeposit = useCallback(async (customerId: string, customerName: string, amount: string, note: string, bankAccountId: string = '', bankAccountName: string = '', date: string = todayString()) => {
     if (!user) return;
     const parsed = parseFloat(amount);
     if (isNaN(parsed) || parsed <= 0) return;
-    await repo.addSavingsEntry(user.uid, customerId, customerName, parsed, 'deposit', note.trim(), todayString(), bankAccountId, bankAccountName);
+    const optimisticId = `opt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    setCustomers(prev => prev.map(c => {
+      if (c.id !== customerId) return c;
+      const newEntry: SavingsEntry = {
+        id: optimisticId,
+        customerId,
+        customerName,
+        amount: parsed,
+        type: 'deposit',
+        note: note.trim(),
+        date,
+        bankAccountId,
+        bankAccountName,
+      };
+      return { ...c, savingsEntries: [...c.savingsEntries, newEntry], savingsBalance: c.savingsBalance + parsed };
+    }));
+    await repo.addSavingsEntry(user.uid, customerId, customerName, parsed, 'deposit', note.trim(), date, bankAccountId, bankAccountName);
   }, [user]);
 
-  const addSavingsWithdrawal = useCallback(async (customerId: string, customerName: string, amount: string, note: string) => {
+  const addSavingsWithdrawal = useCallback(async (customerId: string, customerName: string, amount: string, note: string, bankAccountId: string = '', bankAccountName: string = '', date: string = todayString()) => {
     if (!user) return;
     const parsed = parseFloat(amount);
     if (isNaN(parsed) || parsed <= 0) return;
-    await repo.addSavingsEntry(user.uid, customerId, customerName, parsed, 'withdrawal', note.trim(), todayString());
+    const optimisticId = `opt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    setCustomers(prev => prev.map(c => {
+      if (c.id !== customerId) return c;
+      const newEntry: SavingsEntry = {
+        id: optimisticId,
+        customerId,
+        customerName,
+        amount: parsed,
+        type: 'withdrawal',
+        note: note.trim(),
+        date,
+        bankAccountId,
+        bankAccountName,
+      };
+      return { ...c, savingsEntries: [...c.savingsEntries, newEntry], savingsBalance: c.savingsBalance - parsed };
+    }));
+    await repo.addSavingsEntry(user.uid, customerId, customerName, parsed, 'withdrawal', note.trim(), date, bankAccountId, bankAccountName);
   }, [user]);
 
   const deleteSavingsEntry = useCallback(async (entryId: string) => {
     if (!user) return;
+    setCustomers(prev => prev.map(c => {
+      const entry = c.savingsEntries.find(e => e.id === entryId);
+      if (!entry) return c;
+      const balanceDelta = entry.type === 'deposit' ? -entry.amount : entry.amount;
+      return {
+        ...c,
+        savingsEntries: c.savingsEntries.filter(e => e.id !== entryId),
+        savingsBalance: c.savingsBalance + balanceDelta,
+      };
+    }));
     await repo.deleteSavingsEntry(user.uid, entryId);
   }, [user]);
 
@@ -997,7 +1051,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     if (syncStatus.state === 'SYNCING') return;
 
-    setSyncStatus({ state: 'SYNCING', message: 'Syncing...' });
+    setSyncStatus({ state: 'SYNCING', message: 'Refreshing...' });
     if (syncResetTimerRef.current) clearTimeout(syncResetTimerRef.current);
 
     // Re-subscribe Firestore listeners to force a fresh pull
@@ -1009,7 +1063,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setDeletedCustomers(data.deletedCustomers);
       if (firstSnapshot) {
         firstSnapshot = false;
-        setSyncStatus({ state: 'SUCCESS', message: 'Synced successfully.' });
+        setSyncStatus({ state: 'SUCCESS', message: 'Data refreshed.' });
         syncResetTimerRef.current = setTimeout(() => {
           setSyncStatus({ state: 'IDLE', message: '' });
         }, 4000);

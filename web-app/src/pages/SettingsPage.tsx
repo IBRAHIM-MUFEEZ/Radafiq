@@ -1,9 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { useApp } from '../context/AppContext';
-import { ALL_ACCOUNTS, BANK_ACCOUNTS, CREDIT_CARDS } from '../types/models';
 import { currentTimestampLabel } from '../utils/format';
 import { isPlatformAuthenticatorAvailable } from '../utils/passkey';
-import { fadeInUp, staggerFadeInUp } from '../utils/animations';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.07, delayChildren: 0.1 },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 16 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' as const } },
+};
 
 const RECOVERY_QUESTIONS = [
   'What is your email ID?',
@@ -15,12 +27,11 @@ const RECOVERY_QUESTIONS = [
 export default function SettingsPage() {
   const {
     profile, saveProfile, signOut,
-    settings, setThemeMode, setAccountSelected,
+    settings, setThemeMode,
     security, setPasscode, updatePasscode, clearPasscode, setLockEnabled,
     hasPasskey, registerPasskey, removePasskey,
     exportBackupToFile, importBackupFromFile, backupStatusMessage, backupInProgress,
   } = useApp();
-  const pageRef = useRef<HTMLDivElement>(null);
 
   const [editProfile, setEditProfile] = useState(false);
   const [displayName, setDisplayName] = useState(profile?.displayName ?? '');
@@ -39,14 +50,12 @@ export default function SettingsPage() {
   const [savingPasscode, setSavingPasscode] = useState(false);
 
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const [showAccountsConfig, setShowAccountsConfig] = useState(false);
   const [showRemovePasscodeConfirm, setShowRemovePasscodeConfirm] = useState(false);
 
   const [passkeySupported, setPasskeySupported] = useState(false);
   const [passkeyRegistering, setPasskeyRegistering] = useState(false);
   const [passkeyError, setPasskeyError] = useState('');
 
-  // Check platform authenticator support on mount
   useEffect(() => {
     isPlatformAuthenticatorAvailable().then(setPasskeySupported);
   }, []);
@@ -56,7 +65,6 @@ export default function SettingsPage() {
   const handleSaveProfile = async () => {
     setSavingProfile(true);
     try {
-      // BUG-60 fix: preserve existing photoUrl — don't clear it on profile edit
       await saveProfile(displayName, businessName, email, profile?.photoUrl ?? '');
       setEditProfile(false);
     } finally {
@@ -99,11 +107,6 @@ export default function SettingsPage() {
     }
   };
 
-  useEffect(() => {
-    if (pageRef.current) fadeInUp(pageRef.current, 0, 400);
-    staggerFadeInUp('.settings-card', 80, 'first', 400);
-  }, []);
-
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) importBackupFromFile(file);
@@ -117,7 +120,6 @@ export default function SettingsPage() {
       await registerPasskey();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Registration failed.';
-      // User cancelled — don't show an error
       if (!msg.toLowerCase().includes('cancel') && !msg.toLowerCase().includes('abort')) {
         setPasskeyError(msg);
       }
@@ -127,14 +129,26 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="page-content" ref={pageRef}>
-      <h2 style={{ marginBottom: '0.5rem' }}>Settings</h2>
-      <p className="text-muted text-sm" style={{ marginBottom: '1.5rem' }}>
-        Manage profile, security, backups, and account configuration.
-      </p>
+    <motion.div
+      className="page-content"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
+      <motion.div variants={itemVariants}>
+        <h2 style={{ marginBottom: '0.5rem' }}>Settings</h2>
+        <p className="text-muted text-sm" style={{ marginBottom: '1.5rem' }}>
+          Manage profile, security, backups, and account configuration.
+        </p>
+      </motion.div>
 
       {/* Profile */}
-      <div className="flow-card settings-card" style={{ marginBottom: '1rem' }}>
+      <motion.div
+        className="flow-card"
+        style={{ marginBottom: '1rem' }}
+        variants={itemVariants}
+        whileHover={{ y: -1 }}
+      >
         <h3 style={{ marginBottom: '0.75rem' }}>Profile</h3>
         {editProfile ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
@@ -171,10 +185,15 @@ export default function SettingsPage() {
             </button>
           </>
         )}
-      </div>
+      </motion.div>
 
       {/* Security */}
-      <div className="flow-card settings-card" style={{ '--card-accent': 'var(--secondary)', marginBottom: '1rem' } as React.CSSProperties}>
+      <motion.div
+        className="flow-card"
+        style={{ '--card-accent': 'var(--secondary)', marginBottom: '1rem' } as React.CSSProperties}
+        variants={itemVariants}
+        whileHover={{ y: -1 }}
+      >
         <h3 style={{ marginBottom: '0.875rem' }}>Security</h3>
 
         <div className="toggle-row" style={{ marginBottom: 8 }}>
@@ -298,10 +317,15 @@ export default function SettingsPage() {
             </p>
           )}
         </div>
-      </div>
+      </motion.div>
 
       {/* Backup & Restore */}
-      <div className="flow-card settings-card" style={{ marginBottom: '1rem' }}>
+      <motion.div
+        className="flow-card"
+        style={{ marginBottom: '1rem' }}
+        variants={itemVariants}
+        whileHover={{ y: -1 }}
+      >
         <h3 style={{ marginBottom: '0.5rem' }}>Backup & Restore</h3>
         <p className="text-muted text-sm" style={{ marginBottom: '0.875rem' }}>
           Export your profile, settings, and ledger data to a JSON file, then import it anytime.
@@ -322,90 +346,50 @@ export default function SettingsPage() {
           </button>
         </div>
         <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImport} />
-      </div>
+      </motion.div>
 
       {/* Appearance */}
-      <div className="flow-card hover-lift settings-card" style={{ '--card-accent': 'var(--secondary)', marginBottom: '1rem' } as React.CSSProperties}>
+      <motion.div
+        className="flow-card"
+        style={{ '--card-accent': 'var(--secondary)', marginBottom: '1rem' } as React.CSSProperties}
+        variants={itemVariants}
+        whileHover={{ y: -1 }}
+      >
         <h3 style={{ marginBottom: '0.875rem' }}>Appearance</h3>
         <div className="two-col">
-          <button
-            className={`btn btn-ripple ${settings.themeMode === 'LIGHT' ? 'btn-primary' : 'btn-outline'}`}
+          <motion.button
+            className={`btn ${settings.themeMode === 'LIGHT' ? 'btn-primary' : 'btn-outline'}`}
             style={{ height: 56, fontSize: '0.9375rem', transition: 'all 0.3s ease' }}
             onClick={() => setThemeMode('LIGHT')}
+            whileTap={{ scale: 0.97 }}
           >
-            <span style={{ fontSize: '1.2rem', display: 'inline-block', transition: 'transform 0.3s ease' }}>
+            <span style={{ fontSize: '1.2rem', display: 'inline-block' }}>
               ☀️
             </span>
             {' '}Light
-          </button>
-          <button
-            className={`btn btn-ripple ${settings.themeMode === 'DARK' ? 'btn-primary' : 'btn-outline'}`}
+          </motion.button>
+          <motion.button
+            className={`btn ${settings.themeMode === 'DARK' ? 'btn-primary' : 'btn-outline'}`}
             style={{ height: 56, fontSize: '0.9375rem', transition: 'all 0.3s ease' }}
             onClick={() => setThemeMode('DARK')}
+            whileTap={{ scale: 0.97 }}
           >
-            <span style={{ fontSize: '1.2rem', display: 'inline-block', transition: 'transform 0.3s ease' }}>
+            <span style={{ fontSize: '1.2rem', display: 'inline-block' }}>
               🌙
             </span>
             {' '}Dark
-          </button>
+          </motion.button>
         </div>
-      </div>
+      </motion.div>
 
-      {/* Account Selection */}
-      <div className="flow-card settings-card" style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-          <h3>Account Selection</h3>
-          <button className="btn btn-ghost btn-sm" onClick={() => setShowAccountsConfig(v => !v)}>
-            {showAccountsConfig ? 'Hide' : 'Configure'}
-          </button>
-        </div>
-        <p className="text-muted text-sm">Choose which accounts appear in transaction forms.</p>
-
-        {showAccountsConfig && (
-          <div style={{ marginTop: '1rem' }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
-              Credit Cards
-            </div>
-            {CREDIT_CARDS.map(a => (
-              <div key={a.id} className="toggle-row" style={{ marginBottom: 6 }}>
-                <div className="toggle-info">
-                  <div className="toggle-title" style={{ fontSize: '0.875rem' }}>{a.name}</div>
-                </div>
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={settings.selectedAccountIds.has(a.id)}
-                    onChange={e => setAccountSelected(a.id, e.target.checked)}
-                  />
-                  <span className="switch-track" />
-                </label>
-              </div>
-            ))}
-
-            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '1rem 0 8px' }}>
-              Bank Accounts
-            </div>
-            {BANK_ACCOUNTS.map(a => (
-              <div key={a.id} className="toggle-row" style={{ marginBottom: 6 }}>
-                <div className="toggle-info">
-                  <div className="toggle-title" style={{ fontSize: '0.875rem' }}>{a.name}</div>
-                </div>
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={settings.selectedAccountIds.has(a.id)}
-                    onChange={e => setAccountSelected(a.id, e.target.checked)}
-                  />
-                  <span className="switch-track" />
-                </label>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
       {/* Account / Sign Out */}
-      <div className="flow-card settings-card" style={{ '--card-accent': 'var(--red)' } as React.CSSProperties}>
+      <motion.div
+        className="flow-card"
+        style={{ '--card-accent': 'var(--red)' } as React.CSSProperties}
+        variants={itemVariants}
+        whileHover={{ y: -1 }}
+      >
         <h3 style={{ marginBottom: '0.5rem' }}>Account</h3>
         <p className="text-muted text-sm" style={{ marginBottom: '0.875rem' }}>
           Sign out and return to the profile setup screen.
@@ -413,7 +397,7 @@ export default function SettingsPage() {
         <button className="btn btn-danger" style={{ display: 'inline-block' }} onClick={() => setShowLogoutConfirm(true)}>
           Sign Out
         </button>
-      </div>
+      </motion.div>
 
       {/* Passcode Setup Modal */}
       {showPasscodeSetup && (
@@ -522,6 +506,6 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

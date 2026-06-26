@@ -1,10 +1,24 @@
 import React, { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { ArrowLeft } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatMoney, formatDate } from '../utils/format';
 import { isVisibleInTransactions } from '../types/models';
 import AnimatedMoney from '../components/AnimatedMoney';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.07, delayChildren: 0.1 },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 16 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' as const } },
+};
 
 export default function AccountDetail() {
   const { accountId } = useParams<{ accountId: string }>();
@@ -57,13 +71,25 @@ export default function AccountDetail() {
   };
 
   return (
-    <div className="page-content">
-      <button className="btn btn-ghost" style={{ marginBottom: '1rem' }} onClick={() => navigate('/accounts')}>
-        <ArrowLeft size={18} /> Accounts
-      </button>
+    <motion.div
+      className="page-content"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
+      <motion.div variants={itemVariants}>
+        <button className="btn btn-ghost" style={{ marginBottom: '1rem' }} onClick={() => navigate('/accounts')}>
+          <ArrowLeft size={18} /> Accounts
+        </button>
+      </motion.div>
 
       {/* Account summary */}
-      <div className="flow-card" style={{ '--card-accent': accentColor, marginBottom: '1rem' } as React.CSSProperties}>
+      <motion.div
+        className="flow-card"
+        style={{ '--card-accent': accentColor, marginBottom: '1rem' } as React.CSSProperties}
+        variants={itemVariants}
+        whileHover={{ y: -1 }}
+      >
         <h2 style={{ marginBottom: 4 }}>{card.name}</h2>
         <p className="text-muted text-sm" style={{ marginBottom: '1rem' }}>
           {card.accountKind === 'credit_card' ? 'Credit Card' : 'Bank Account'}
@@ -129,18 +155,21 @@ export default function AccountDetail() {
             )}
           </>
         )}
-      </div>
+      </motion.div>
 
       {/* Customers using this account */}
       {accountCustomers.length > 0 && (
         <>
-          <h3 style={{ marginBottom: '0.75rem' }}>Customers</h3>
-          {accountCustomers.map(({ customer, used, due }) => (
-            <div
+          <motion.h3 style={{ marginBottom: '0.75rem' }} variants={itemVariants}>Customers</motion.h3>
+          {accountCustomers.map(({ customer, used, due }, i) => (
+            <motion.div
               key={customer.id}
               className="flow-card"
               style={{ cursor: 'pointer', marginBottom: '0.75rem' }}
               onClick={() => navigate(`/customers/${customer.id}`)}
+              variants={itemVariants}
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.99 }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div className="avatar">{customer.name.slice(0, 2).toUpperCase()}</div>
@@ -153,7 +182,7 @@ export default function AccountDetail() {
                   <div className="text-muted text-xs">{due > 0 ? 'Due' : 'Settled'}</div>
                 </div>
               </div>
-            </div>
+            </motion.div>
           ))}
         </>
       )}
@@ -237,6 +266,6 @@ export default function AccountDetail() {
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

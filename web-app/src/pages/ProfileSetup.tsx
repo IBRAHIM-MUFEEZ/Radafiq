@@ -1,12 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { useApp } from '../context/AppContext';
 import RadafiqLogo from '../components/RadafiqLogo';
-import { fadeInUp, fadeInScale } from '../utils/animations';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.12, delayChildren: 0.1 },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' as const } },
+};
 
 export default function ProfileSetup() {
   const { profile, saveProfile, signInWithGoogle, signOut, user } = useApp();
-  const logoRef = useRef<HTMLDivElement>(null);
-  const formRef = useRef<HTMLDivElement>(null);
   const [displayName, setDisplayName] = useState(profile?.displayName ?? '');
   const [businessName, setBusinessName] = useState(profile?.businessName ?? '');
   const [email, setEmail] = useState(profile?.email ?? user?.email ?? '');
@@ -14,7 +25,6 @@ export default function ProfileSetup() {
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState('');
 
-  // BUG-29 fix: sync form fields when profile loads after mount (e.g. after Google sign-in)
   useEffect(() => {
     if (profile) {
       setDisplayName(profile.displayName);
@@ -22,11 +32,6 @@ export default function ProfileSetup() {
       setEmail(profile.email);
     }
   }, [profile]);
-
-  useEffect(() => {
-    if (logoRef.current) fadeInScale(logoRef.current);
-    if (formRef.current) fadeInUp(formRef.current, 200);
-  }, []);
 
   const handleSave = async () => {
     if (!displayName.trim() || !businessName.trim()) return;
@@ -43,8 +48,6 @@ export default function ProfileSetup() {
     setSignInError('');
     try {
       await signInWithGoogle();
-      // signInWithRedirect navigates away — page will reload on return
-      // so we never reach here in the redirect flow
     } catch (e: unknown) {
       const err = e as { code?: string; message?: string };
       if (err.code === 'auth/unauthorized-domain') {
@@ -57,116 +60,141 @@ export default function ProfileSetup() {
   };
 
   return (
-    <div className="radafiq-bg" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+    <motion.div
+      className="radafiq-bg"
+      style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
       <div style={{ width: '100%', maxWidth: 480 }}>
         {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }} ref={logoRef}>
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
+        <motion.div style={{ textAlign: 'center', marginBottom: '2rem' }} variants={itemVariants}>
+          <motion.div
+            style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}
+            whileHover={{ scale: 1.05 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 10 }}
+          >
             <RadafiqLogo size={88} />
-          </div>
+          </motion.div>
           <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text)' }}>Radafiq</h1>
           <p className="text-muted" style={{ marginTop: 4 }}>Customer Ledger & Finance Manager</p>
-        </div>
+        </motion.div>
 
-        <div ref={formRef}>
-        {/* Google Sign-In */}
-        {!user ? (
-          <div className="flow-card" style={{ marginBottom: '1rem' }}>
-            <h3 style={{ marginBottom: 8 }}>Sign in with Google</h3>
-            <p className="text-muted text-sm" style={{ marginBottom: '1rem' }}>
-              One tap to sign in, connect Google Drive, and restore your latest backup automatically.
-            </p>
-            <button
-              className="btn btn-primary btn-full btn-lg"
-              onClick={handleGoogleSignIn}
-              disabled={signingIn}
+        <motion.div variants={itemVariants}>
+          {/* Google Sign-In */}
+          {!user ? (
+            <motion.div
+              className="flow-card"
+              style={{ marginBottom: '1rem' }}
+              whileHover={{ y: -2 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 20 }}
             >
-              {signingIn ? 'Signing in...' : 'Continue with Google'}
-            </button>
-            {signInError && (
-              <p style={{ color: 'var(--red)', fontSize: '0.8rem', marginTop: 8 }}>
-                {signInError}
+              <h3 style={{ marginBottom: 8 }}>Sign in with Google</h3>
+              <p className="text-muted text-sm" style={{ marginBottom: '1rem' }}>
+                One tap to sign in, connect Google Drive, and restore your latest backup automatically.
               </p>
-            )}
-          </div>
-        ) : (
-          <div className="flow-card" style={{ marginBottom: '1rem', '--card-accent': 'var(--green)' } as React.CSSProperties}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{
-                width: 36, height: 36, borderRadius: '50%',
-                background: 'color-mix(in srgb, var(--green) 15%, transparent)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: 'var(--green)', fontSize: '1.125rem',
-              }}>✓</div>
-              <div>
-                <div style={{ fontWeight: 600, color: 'var(--green)' }}>Signed in with Google</div>
-                <div className="text-muted text-sm">{user.email}</div>
-              </div>
-              <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => signOut()}>
-                Sign out
+              <button
+                className="btn btn-primary btn-full btn-lg"
+                onClick={handleGoogleSignIn}
+                disabled={signingIn}
+              >
+                {signingIn ? 'Signing in...' : 'Continue with Google'}
               </button>
-            </div>
-          </div>
-        )}
-
-        {/* Profile form */}
-        <div className="flow-card">
-          <h3 style={{ marginBottom: '1rem' }}>Profile Details</h3>
-
-          {profile?.photoUrl && (
-            <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
-              <img
-                src={profile.photoUrl}
-                alt="Profile"
-                referrerPolicy="no-referrer"
-                style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--outline)' }}
-              />
-            </div>
+              {signInError && (
+                <p style={{ color: 'var(--red)', fontSize: '0.8rem', marginTop: 8 }}>
+                  {signInError}
+                </p>
+              )}
+            </motion.div>
+          ) : (
+            <motion.div
+              className="flow-card"
+              style={{ marginBottom: '1rem', '--card-accent': 'var(--green)' } as React.CSSProperties}
+              whileHover={{ y: -2 }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: '50%',
+                  background: 'color-mix(in srgb, var(--green) 15%, transparent)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: 'var(--green)', fontSize: '1.125rem',
+                }}>✓</div>
+                <div>
+                  <div style={{ fontWeight: 600, color: 'var(--green)' }}>Signed in with Google</div>
+                  <div className="text-muted text-sm">{user.email}</div>
+                </div>
+                <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => signOut()}>
+                  Sign out
+                </button>
+              </div>
+            </motion.div>
           )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div className="form-group">
-              <label className="form-label">Your Name *</label>
-              <input
-                className="form-input"
-                value={displayName}
-                onChange={e => setDisplayName(e.target.value)}
-                placeholder="Enter your name"
-              />
-            </div>
+          {/* Profile form */}
+          <motion.div
+            className="flow-card"
+            whileHover={{ y: -1 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+          >
+            <h3 style={{ marginBottom: '1rem' }}>Profile Details</h3>
 
-            <div className="form-group">
-              <label className="form-label">Business / Shop Name *</label>
-              <input
-                className="form-input"
-                value={businessName}
-                onChange={e => setBusinessName(e.target.value)}
-                placeholder="Enter business name"
-              />
-            </div>
+            {profile?.photoUrl && (
+              <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
+                <img
+                  src={profile.photoUrl}
+                  alt="Profile"
+                  referrerPolicy="no-referrer"
+                  style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--outline)' }}
+                />
+              </div>
+            )}
 
-            <div className="form-group">
-              <label className="form-label">Email</label>
-              <input
-                className="form-input"
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="Enter email"
-              />
-            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label">Your Name *</label>
+                <input
+                  className="form-input"
+                  value={displayName}
+                  onChange={e => setDisplayName(e.target.value)}
+                  placeholder="Enter your name"
+                />
+              </div>
 
-            <button
-              className="btn btn-primary btn-full btn-lg"
-              onClick={handleSave}
-              disabled={saving || !displayName.trim() || !businessName.trim() || !user}
-            >
-              {saving ? 'Saving...' : 'Save Profile'}
-            </button>
-          </div>
-        </div>
-        </div>
+              <div className="form-group">
+                <label className="form-label">Business / Shop Name *</label>
+                <input
+                  className="form-input"
+                  value={businessName}
+                  onChange={e => setBusinessName(e.target.value)}
+                  placeholder="Enter business name"
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Email</label>
+                <input
+                  className="form-input"
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="Enter email"
+                />
+              </div>
+
+              <motion.button
+                className="btn btn-primary btn-full btn-lg"
+                onClick={handleSave}
+                disabled={saving || !displayName.trim() || !businessName.trim() || !user}
+                whileTap={{ scale: 0.98 }}
+                whileHover={{ scale: 1.01 }}
+              >
+                {saving ? 'Saving...' : 'Save Profile'}
+              </motion.button>
+            </div>
+          </motion.div>
+        </motion.div>
       </div>
-    </div>
+    </motion.div>
   );
 }

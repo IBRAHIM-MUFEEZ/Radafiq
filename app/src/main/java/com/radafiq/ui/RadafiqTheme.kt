@@ -3,6 +3,14 @@ package com.radafiq.ui
 import android.app.Activity
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -13,6 +21,10 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -20,6 +32,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -34,6 +47,7 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -48,14 +62,16 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -64,72 +80,94 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import com.radafiq.data.settings.AppThemeMode
 
-private val GlassDark = Color(0xFF0A0A1A)
-private val GlassDarkSoft = Color(0xFF12122A)
-private val GlassDarkRaised = Color(0xFF1E1E40)
+// ── New "Warm Modern Fintech" palette ─────────────────────────────────────
+// Dark mode neutrals (warm slate)
+private val DarkBg             = Color(0xFF0A0A0A)
+private val DarkSurface         = Color(0xFF1C1C1E)
+private val DarkElevated        = Color(0xFF32324A)
+private val DarkOutline         = Color(0xFF333344)
+private val DarkTextPrimary     = Color(0xFFF0F0F4)
+private val DarkTextMuted       = Color(0xFF8888A0)
 
-private val GlassOutline = Color(0xFF3A3A6A)
-private val GlassWhite = Color(0xFFFFFFFF)
-private val GlassText = Color(0xFFF1F1F7)
-private val GlassMuted = Color(0xFF8888BB)
+// Light mode neutrals (warm gray)
+private val LightBg             = Color(0xFFF5F3F0)
+private val LightSurface        = Color(0xFFFFFFFF)
+private val LightElevated       = Color(0xFFFFFFFF)
+private val LightOutline        = Color(0xFFDDD8D0)
+private val LightTextPrimary    = Color(0xFF1A1A22)
+private val LightTextMuted      = Color(0xFF777780)
 
-// Web-matching accent palette — indigo, emerald, amber, rose
-private val AccentIndigo = Color(0xFF818CF8)
-private val AccentIndigoDeep = Color(0xFF6366F1)
-private val AccentEmerald = Color(0xFF34D399)
-private val AccentAmber = Color(0xFFFBBF24)
-private val AccentRose = Color(0xFFFB7185)
-private val AccentViolet = Color(0xFFA78BFA)
-private val AccentCyan = Color(0xFF22D3EE)
-private val AccentOrange = Color(0xFFFB923C)
-private val AccentRed = Color(0xFFEF4444)
+// Accent palette — warm cobalt + supporting hues
+private val AccentCobalt        = Color(0xFF5B7FFF)
+private val AccentCobaltDeep    = Color(0xFF4A6CF0)
+private val AccentTeal          = Color(0xFF2DD4A0)
+private val AccentTealDeep      = Color(0xFF10B981)
+private val AccentAmber         = Color(0xFFFBBF24)
+private val AccentWarmAmber     = Color(0xFFF59E5A)
+private val AccentRose          = Color(0xFFFB7185)
+private val AccentCyan          = Color(0xFF22D3EE)
+private val AccentOrange        = Color(0xFFFB923C)
+private val AccentCoralRed      = Color(0xFFFF6B6A)
 
 private val RadafiqLightColors: ColorScheme = lightColorScheme(
-    primary = AccentIndigoDeep,
-    onPrimary = GlassWhite,
-    primaryContainer = Color(0xFFE8E4F8),
+    primary = AccentCobalt,
+    onPrimary = LightSurface,
+    primaryContainer = Color(0xFFEEF2FF),
     onPrimaryContainer = Color(0xFF1A1A3E),
-    secondary = AccentViolet,
-    onSecondary = GlassWhite,
-    secondaryContainer = Color(0xFFEEEAFA),
-    onSecondaryContainer = Color(0xFF1A1A3E),
-    tertiary = Color(0xFFEA580C),
-    onTertiary = GlassWhite,
+    secondary = AccentTealDeep,
+    onSecondary = LightSurface,
+    secondaryContainer = Color(0xFFECFDF5),
+    onSecondaryContainer = Color(0xFF0F2D24),
+    tertiary = Color(0xFFD97706),
+    onTertiary = LightSurface,
     error = Color(0xFFDC2626),
-    onError = GlassWhite,
-    background = Color(0xFFE6E0F0),
-    onBackground = Color(0xFF1A1A3E),
-    surface = GlassWhite.copy(alpha = 0.70f),
-    onSurface = Color(0xFF1A1A3E),
+    onError = LightSurface,
+    background = LightBg,
+    onBackground = LightTextPrimary,
+    surface = LightSurface,
+    onSurface = LightTextPrimary,
     surfaceVariant = Color(0xFFF0EEF8),
-    onSurfaceVariant = Color(0xFF6666AA),
-    outline = Color(0xFFD0D0E8)
+    onSurfaceVariant = LightTextMuted,
+    outline = LightOutline
 )
 
 private val RadafiqDarkColors: ColorScheme = darkColorScheme(
-    primary = AccentIndigo,
-    onPrimary = GlassWhite,
-    primaryContainer = AccentIndigoDeep,
-    onPrimaryContainer = GlassText,
-    secondary = AccentViolet,
-    onSecondary = GlassDark,
-    secondaryContainer = GlassDarkRaised,
-    onSecondaryContainer = Color(0xFFD0D0F0),
-    tertiary = AccentOrange,
-    onTertiary = GlassDark,
-    error = AccentRed,
-    onError = GlassWhite,
-    background = GlassDark,
-    onBackground = GlassText,
-    surface = Color(0x16FFFFFF),
-    onSurface = GlassText,
-    surfaceVariant = GlassDarkSoft,
-    onSurfaceVariant = GlassMuted,
-    outline = GlassOutline
+    primary = AccentCobalt,
+    onPrimary = DarkTextPrimary,
+    primaryContainer = Color(0xFF1A2355),
+    onPrimaryContainer = DarkTextPrimary,
+    secondary = AccentTeal,
+    onSecondary = DarkBg,
+    secondaryContainer = Color(0xFF0F2D24),
+    onSecondaryContainer = Color(0xFFA7F3D0),
+    tertiary = AccentWarmAmber,
+    onTertiary = DarkBg,
+    error = AccentCoralRed,
+    onError = DarkTextPrimary,
+    background = DarkBg,
+    onBackground = DarkTextPrimary,
+    surface = DarkSurface,
+    onSurface = DarkTextPrimary,
+    surfaceVariant = DarkSurface,
+    onSurfaceVariant = DarkTextMuted,
+    outline = DarkOutline
 )
 
 internal val LocalRadafiqDarkTheme = staticCompositionLocalOf { true }
-private val AppSans = FontFamily.SansSerif
+
+/**
+ * Shared Switch colors for every toggle in the app.
+ * Dark OFF → #4B5563 (visible slate), Light OFF → #D1D5DB (neutral gray),
+ * ON → primary color.
+ */
+@Composable
+fun radafiqSwitchColors() = SwitchDefaults.colors(
+    uncheckedTrackColor = if (LocalRadafiqDarkTheme.current) Color(0xFF4B5563) else Color(0xFFD1D5DB),
+    uncheckedThumbColor = if (LocalRadafiqDarkTheme.current) Color(0xFFE0E0E0) else Color.White,
+    checkedTrackColor = MaterialTheme.colorScheme.primary,
+    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+)
+
 private val BaseTypography = Typography()
 
 private fun appStyle(
@@ -138,15 +176,14 @@ private fun appStyle(
     letterSpacing: Float = 0f
 ): TextStyle {
     return base.copy(
-        fontFamily = AppSans,
         fontWeight = weight,
         letterSpacing = letterSpacing.sp
     )
 }
 
 private val RadafiqTypography = Typography(
-    headlineLarge = appStyle(BaseTypography.headlineLarge, FontWeight.Bold, 0.02f),
-    headlineMedium = appStyle(BaseTypography.headlineMedium, FontWeight.Bold, 0.02f),
+    headlineLarge = appStyle(BaseTypography.headlineLarge, FontWeight.Bold, 0.01f),
+    headlineMedium = appStyle(BaseTypography.headlineMedium, FontWeight.Bold, 0.005f),
     headlineSmall = appStyle(BaseTypography.headlineSmall, FontWeight.SemiBold, 0.01f),
     titleLarge = appStyle(BaseTypography.titleLarge, FontWeight.SemiBold, 0.01f),
     titleMedium = appStyle(BaseTypography.titleMedium, FontWeight.SemiBold, 0.01f),
@@ -154,17 +191,17 @@ private val RadafiqTypography = Typography(
     bodyLarge = appStyle(BaseTypography.bodyLarge, FontWeight.Normal),
     bodyMedium = appStyle(BaseTypography.bodyMedium, FontWeight.Normal),
     bodySmall = appStyle(BaseTypography.bodySmall, FontWeight.Normal),
-    labelLarge = appStyle(BaseTypography.labelLarge, FontWeight.SemiBold, 0.03f),
-    labelMedium = appStyle(BaseTypography.labelMedium, FontWeight.Medium, 0.03f),
-    labelSmall = appStyle(BaseTypography.labelSmall, FontWeight.Medium, 0.04f)
+    labelLarge = appStyle(BaseTypography.labelLarge, FontWeight.SemiBold, 0.02f),
+    labelMedium = appStyle(BaseTypography.labelMedium, FontWeight.Medium, 0.02f),
+    labelSmall = appStyle(BaseTypography.labelSmall, FontWeight.Medium, 0.03f)
 )
 
 private val RadafiqShapes = Shapes(
-    extraSmall = RoundedCornerShape(18.dp),
-    small = RoundedCornerShape(22.dp),
-    medium = RoundedCornerShape(28.dp),
-    large = RoundedCornerShape(32.dp),
-    extraLarge = RoundedCornerShape(36.dp)
+    extraSmall = RoundedCornerShape(12.dp),
+    small = RoundedCornerShape(14.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(24.dp)
 )
 
 @Composable
@@ -182,11 +219,7 @@ fun RadafiqTheme(
             controller.isAppearanceLightStatusBars = !useDarkTheme
             controller.isAppearanceLightNavigationBars = !useDarkTheme
 
-            // Set the window background to the solid base colour so Android's
-            // long/scrolling screenshot compositor fills every area — including
-            // scroll content below the visible viewport — with the correct
-            // theme colour instead of the system default white/gray.
-            val windowBg = if (useDarkTheme) 0xFF0A0A1A.toInt() else 0xFFE6E0F0.toInt()
+            val windowBg = if (useDarkTheme) 0xFF0A0A0A.toInt() else 0xFFF5F3F0.toInt()
             window.decorView.setBackgroundColor(windowBg)
         }
     }
@@ -201,22 +234,12 @@ fun RadafiqTheme(
     }
 }
 
-/**
- * Solid base colour that fills any area not covered by the gradient — used as
- * the window/screen background so long/scrolling screenshots stay on-theme.
- */
 @Composable
 fun radafiqSolidBg(): Color {
     val useDarkTheme = LocalRadafiqDarkTheme.current
-    return if (useDarkTheme) Color(0xFF0A0A1A) else Color(0xFFE6E0F0)
+    return if (useDarkTheme) DarkBg else LightBg
 }
 
-/**
- * Modifier that paints the correct solid background colour behind scrollable
- * content.  Apply this to LazyColumn / Column so every pixel rendered during
- * a long/scrolling screenshot uses the right theme colour even beyond the
- * visible frame where [RadafiqBackground]'s gradient Box ends.
- */
 @Composable
 fun Modifier.radafiqScrollBackground(): Modifier {
     val bg = radafiqSolidBg()
@@ -226,44 +249,14 @@ fun Modifier.radafiqScrollBackground(): Modifier {
 @Composable
 fun RadafiqBackground(content: @Composable () -> Unit) {
     val useDarkTheme = LocalRadafiqDarkTheme.current
-    // Solid base colour — fills the window behind the gradient so any area
-    // outside the rendered gradient rectangle (e.g. during long screenshots
-    // or on foldable / large-screen layouts) stays on-theme.
-    val solidBase = if (useDarkTheme) Color(0xFF0A0A1A) else Color(0xFFE6E0F0)
-    val backgroundBrush = if (useDarkTheme) {
-        Brush.verticalGradient(
-            colors = listOf(
-                Color(0xFF0A0A1A),
-                Color(0xFF0E0E28),
-                Color(0xFF141430),
-                Color(0xFF0F0F20)
-            )
-        )
-    } else {
-        Brush.verticalGradient(
-            colors = listOf(
-                Color(0xFFE6E0F0),
-                Color(0xFFE0DAF2),
-                Color(0xFFDCE8F5),
-                Color(0xFFE6E0F0)
-            )
-        )
-    }
+    val solidBase = if (useDarkTheme) DarkBg else LightBg
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            // 1. Solid base first — covers the entire composable including any
-            //    scroll overflow captured in a long screenshot.
             .background(solidBase)
-            // 2. Gradient on top for the visible decorative effect.
-            .background(backgroundBrush)
     ) {
-        GlassBackdrop()
-        // Use solidBase instead of Color.Transparent so every frame rendered
-        // during a long/scrolling screenshot has the correct opaque background.
-        // Semi-transparent card overlays (FlowCard, TransactionRow, etc.) will
-        // composite correctly against this colour instead of system-default white.
+        RadafiqBackdrop()
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = solidBase,
@@ -273,33 +266,29 @@ fun RadafiqBackground(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun GlassBackdrop() {
+private fun RadafiqBackdrop() {
     val useDarkTheme = LocalRadafiqDarkTheme.current
-    val primaryGlow = AccentIndigo.copy(alpha = if (useDarkTheme) 0.15f else 0.08f)
-    val secondaryGlow = AccentViolet.copy(alpha = if (useDarkTheme) 0.12f else 0.06f)
-    val tertiaryGlow = AccentEmerald.copy(alpha = if (useDarkTheme) 0.08f else 0.04f)
+    // Very subtle radial glows — removed the heavy glass-backdrop aesthetic
+    val glow1 = AccentCobalt.copy(alpha = if (useDarkTheme) 0.06f else 0.03f)
+    val glow2 = AccentTeal.copy(alpha = if (useDarkTheme) 0.04f else 0.02f)
 
     Canvas(modifier = Modifier.fillMaxSize()) {
         drawCircle(
-            color = primaryGlow,
-            radius = size.minDimension * 0.30f,
-            center = Offset(size.width * 0.15f, size.height * 0.08f),
+            color = glow1,
+            radius = size.minDimension * 0.35f,
+            center = Offset(size.width * 0.12f, size.height * 0.06f),
             style = Fill
         )
         drawCircle(
-            color = secondaryGlow,
+            color = glow2,
             radius = size.minDimension * 0.25f,
-            center = Offset(size.width * 0.90f, size.height * 0.15f),
-            style = Fill
-        )
-        drawCircle(
-            color = tertiaryGlow,
-            radius = size.minDimension * 0.20f,
-            center = Offset(size.width * 0.70f, size.height * 0.88f),
+            center = Offset(size.width * 0.85f, size.height * 0.90f),
             style = Fill
         )
     }
 }
+
+// ── Layout utilities (unchanged in structure, kept for reference) ─────────
 
 @Composable
 fun AdaptiveHeaderRow(
@@ -396,45 +385,46 @@ fun PageHeader(
     )
 }
 
+// ── Reusable components — NEW WARM MODERN FINANCIAL STYLING ───────────────
+
+/**
+ * Elevated card with solid surface, subtle shadow, no border.
+ * Replaces the old glass-morphism card (semi-transparent bg + border).
+ */
 @Composable
 fun FlowCard(
     modifier: Modifier = Modifier,
     accentColor: Color = MaterialTheme.colorScheme.primary,
+    verticalPadding: Dp = 12.dp,
     content: @Composable () -> Unit
 ) {
     val useDarkTheme = LocalRadafiqDarkTheme.current
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = MaterialTheme.shapes.small,
         colors = CardDefaults.cardColors(
-            containerColor = if (useDarkTheme) {
-                GlassDarkSoft
-            } else {
-                GlassWhite.copy(alpha = 0.75f)
-            },
+            containerColor = if (useDarkTheme) DarkSurface else LightSurface,
             contentColor = MaterialTheme.colorScheme.onSurface
         ),
-        border = BorderStroke(
-            width = 1.dp,
-            color = if (useDarkTheme) {
-                GlassOutline.copy(alpha = 0.56f)
-            } else {
-                Color(0xFFD0D0E8).copy(alpha = 0.60f)
-            }
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 4.dp
+        )
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .padding(horizontal = 14.dp, vertical = verticalPadding)
         ) {
             content()
         }
     }
 }
 
+/**
+ * Hero panel for prominent financial metrics (Outstanding Balance).
+ * Solid primary container background, elevated, no decorative circles.
+ */
 @Composable
 fun HeroPanel(
     title: String,
@@ -444,46 +434,25 @@ fun HeroPanel(
 ) {
     val useDarkTheme = LocalRadafiqDarkTheme.current
 
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(32.dp))
-            .border(
-                width = 1.dp,
-                color = if (useDarkTheme) {
-                    GlassOutline.copy(alpha = 0.56f)
-                } else {
-                    Color(0xFFD0D0E8).copy(alpha = 0.50f)
-                },
-                shape = RoundedCornerShape(32.dp)
-            )
-            .background(
-                Brush.linearGradient(
-                    colors = if (useDarkTheme) {
-                        listOf(
-                            Color(0x22FFFFFF),
-                            Color(0x18FFFFFF),
-                            Color(0x1EFFFFFF)
-                        )
-                    } else {
-                        listOf(
-                            GlassWhite.copy(alpha = 0.88f),
-                            Color(0xFFF0EEF8).copy(alpha = 0.75f),
-                            Color(0xFFEEEAFA).copy(alpha = 0.82f)
-                        )
-                    }
-                )
-            )
-            .padding(horizontal = 22.dp, vertical = 24.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .size(120.dp)
-                .clip(CircleShape)
-                .background(AccentIndigo.copy(alpha = if (useDarkTheme) 0.10f else 0.08f))
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(
+            containerColor = if (useDarkTheme)
+                DarkSurface
+            else
+                Color(0xFFEEF2FF),
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 6.dp
         )
-        Column {
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp, vertical = 24.dp)
+        ) {
             GradientText(
                 text = title,
                 style = MaterialTheme.typography.labelLarge.copy(
@@ -512,8 +481,7 @@ fun HeroPanel(
 }
 
 /**
- * HeroPanel overload that accepts a raw [Double] and animates the count-up
- * internally. Prefer this over the String overload for live data values.
+ * HeroPanel overload that accepts a raw [Double] with animated count-up.
  */
 @Composable
 fun HeroPanel(
@@ -539,46 +507,25 @@ fun HeroPanel(
         }
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(32.dp))
-            .border(
-                width = 1.dp,
-                color = if (useDarkTheme) {
-                    GlassOutline.copy(alpha = 0.60f)
-                } else {
-                    Color(0xFFD0D0E8).copy(alpha = 0.50f)
-                },
-                shape = RoundedCornerShape(32.dp)
-            )
-            .background(
-                Brush.linearGradient(
-                    colors = if (useDarkTheme) {
-                        listOf(
-                            Color(0x22FFFFFF),
-                            Color(0x18FFFFFF),
-                            Color(0x20FFFFFF)
-                        )
-                    } else {
-                        listOf(
-                            GlassWhite.copy(alpha = 0.88f),
-                            GlassWhite.copy(alpha = 0.75f),
-                            Color(0xFFF0EEF8).copy(alpha = 0.80f)
-                        )
-                    }
-                )
-            )
-            .padding(horizontal = 22.dp, vertical = 24.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .size(120.dp)
-                .clip(CircleShape)
-                .background(AccentIndigo.copy(alpha = if (useDarkTheme) 0.12f else 0.08f))
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(
+            containerColor = if (useDarkTheme)
+                DarkSurface
+            else
+                Color(0xFFEEF2FF),
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 6.dp
         )
-        Column {
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp, vertical = 24.dp)
+        ) {
             GradientText(
                 text = title,
                 style = MaterialTheme.typography.labelLarge.copy(
@@ -606,38 +553,48 @@ fun HeroPanel(
     }
 }
 
-@Composable
-private fun GlassCardModifier(useDarkTheme: Boolean): Modifier = Modifier
-    .clip(RoundedCornerShape(18.dp))
-    .background(if (useDarkTheme) GlassDarkSoft else GlassWhite.copy(alpha = 0.75f))
-    .border(
-        1.dp,
-        if (useDarkTheme) GlassOutline.copy(alpha = 0.55f) else Color(0xFFD0D0E8).copy(alpha = 0.58f),
-        RoundedCornerShape(18.dp)
-    )
-
+/**
+ * Metric pill — solid surface card with a colored 3dp left accent bar.
+ * Replaces old glass card with a circle dot.
+ */
 @Composable
 fun MetricPill(
     label: String,
     value: String,
     color: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    elevatedSurface: Boolean = false,
+    transparentBackground: Boolean = false,
+    compact: Boolean = false
 ) {
     val useDarkTheme = LocalRadafiqDarkTheme.current
+    val bg = when {
+        transparentBackground -> Color.Transparent
+        useDarkTheme && elevatedSurface -> DarkElevated
+        useDarkTheme -> DarkSurface
+        else -> LightSurface
+    }
+    val contentPadding = if (compact) 8.dp else 12.dp
+    val verticalPad = if (compact) 10.dp else 14.dp
+    val labelSpacer = if (compact) 4.dp else 6.dp
+
     Row(
         modifier = modifier
-            .then(GlassCardModifier(useDarkTheme))
-            .defaultMinSize(minHeight = 72.dp)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .clip(MaterialTheme.shapes.small)
+            .background(bg)
+            .then(if (compact || transparentBackground) Modifier else Modifier.defaultMinSize(minHeight = 72.dp))
     ) {
+        // Left accent bar
         Box(
             modifier = Modifier
-                .size(12.dp)
-                .clip(CircleShape)
+                .width(3.dp)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
                 .background(color)
         )
-        Column(modifier = Modifier.padding(start = 10.dp)) {
+        Column(
+            modifier = Modifier.padding(start = contentPadding, top = verticalPad, bottom = verticalPad, end = contentPadding + 2.dp)
+        ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
@@ -645,7 +602,7 @@ fun MetricPill(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(labelSpacer))
             Text(
                 text = value,
                 style = MaterialTheme.typography.titleSmall,
@@ -658,8 +615,7 @@ fun MetricPill(
 }
 
 /**
- * MetricPill overload that accepts a raw [Double] and animates the count-up
- * internally. Prefer this over the String overload for live data values.
+ * MetricPill overload with animated count-up.
  */
 @Composable
 fun MetricPill(
@@ -667,9 +623,21 @@ fun MetricPill(
     amountValue: Double,
     color: Color,
     modifier: Modifier = Modifier,
-    animationKey: Any = Unit
+    animationKey: Any = Unit,
+    elevatedSurface: Boolean = false,
+    transparentBackground: Boolean = false,
+    compact: Boolean = false
 ) {
     val useDarkTheme = LocalRadafiqDarkTheme.current
+    val bg = when {
+        transparentBackground -> Color.Transparent
+        useDarkTheme && elevatedSurface -> DarkElevated
+        useDarkTheme -> DarkSurface
+        else -> LightSurface
+    }
+    val contentPadding = if (compact) 8.dp else 12.dp
+    val verticalPad = if (compact) 10.dp else 14.dp
+    val labelSpacer = if (compact) 4.dp else 6.dp
     val animatable = remember(animationKey) { Animatable(0f) }
     var hasAnimated by rememberSaveable(animationKey) { mutableStateOf(false) }
     LaunchedEffect(animationKey) {
@@ -684,20 +652,23 @@ fun MetricPill(
             animatable.snapTo(amountValue.toFloat())
         }
     }
+
     Row(
         modifier = modifier
-            .then(GlassCardModifier(useDarkTheme))
-            .defaultMinSize(minHeight = 72.dp)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .clip(MaterialTheme.shapes.small)
+            .background(bg)
+            .then(if (compact || transparentBackground) Modifier else Modifier.defaultMinSize(minHeight = 72.dp))
     ) {
         Box(
             modifier = Modifier
-                .size(12.dp)
-                .clip(CircleShape)
+                .width(3.dp)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
                 .background(color)
         )
-        Column(modifier = Modifier.padding(start = 10.dp)) {
+        Column(
+            modifier = Modifier.padding(start = contentPadding, top = verticalPad, bottom = verticalPad, end = contentPadding + 2.dp)
+        ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
@@ -705,6 +676,7 @@ fun MetricPill(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            Spacer(modifier = Modifier.height(labelSpacer))
             Text(
                 text = formatMoney(animatable.value.toDouble()),
                 style = MaterialTheme.typography.titleSmall,
@@ -730,9 +702,16 @@ fun StatusBadge(
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (useDarkTheme) GlassDarkSoft else color.copy(alpha = 0.10f))
-            .border(1.dp, color.copy(alpha = if (useDarkTheme) 0.35f else 0.20f), RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (useDarkTheme) color.copy(alpha = 0.14f)
+                else color.copy(alpha = 0.10f)
+            )
+            .border(
+                1.dp,
+                color.copy(alpha = if (useDarkTheme) 0.25f else 0.15f),
+                RoundedCornerShape(12.dp)
+            )
             .padding(horizontal = 12.dp, vertical = 8.dp)
     )
 }
@@ -743,14 +722,12 @@ fun AccentValueRow(
     value: String,
     color: Color,
     modifier: Modifier = Modifier
-    ) {
-    val useDarkTheme = LocalRadafiqDarkTheme.current
+) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(if (useDarkTheme) GlassDarkSoft else GlassWhite.copy(alpha = 0.75f))
-            .border(1.dp, if (useDarkTheme) GlassOutline.copy(alpha = 0.55f) else Color(0xFFD0D0E8).copy(alpha = 0.58f), RoundedCornerShape(18.dp))
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -776,8 +753,7 @@ fun AccentValueRow(
 }
 
 /**
- * AccentValueRow overload that accepts a raw [Double] and animates the count-up
- * internally. Prefer this over the String overload for live data values.
+ * AccentValueRow overload with animated count-up.
  */
 @Composable
 fun AccentValueRow(
@@ -787,7 +763,6 @@ fun AccentValueRow(
     modifier: Modifier = Modifier,
     animationKey: Any = Unit
 ) {
-    val useDarkTheme = LocalRadafiqDarkTheme.current
     val animatable = remember(animationKey) { Animatable(0f) }
     var hasAnimated by rememberSaveable(animationKey) { mutableStateOf(false) }
     LaunchedEffect(animationKey) {
@@ -802,12 +777,12 @@ fun AccentValueRow(
             animatable.snapTo(amountValue.toFloat())
         }
     }
+
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(if (useDarkTheme) GlassDarkSoft else GlassWhite.copy(alpha = 0.75f))
-            .border(1.dp, if (useDarkTheme) GlassOutline.copy(alpha = 0.55f) else Color(0xFFD0D0E8).copy(alpha = 0.58f), RoundedCornerShape(18.dp))
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -848,30 +823,94 @@ fun EmptyState(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .clip(RoundedCornerShape(28.dp))
-                .background(if (useDarkTheme) GlassDarkSoft else GlassWhite.copy(alpha = 0.75f))
-                .border(1.dp, if (useDarkTheme) GlassOutline.copy(alpha = 0.55f) else Color(0xFFD0D0E8).copy(alpha = 0.58f), RoundedCornerShape(28.dp))
-                .padding(24.dp)
+        Card(
+            shape = MaterialTheme.shapes.medium,
+            colors = CardDefaults.cardColors(
+                containerColor = if (useDarkTheme) DarkSurface else LightSurface
+            ),
+            elevation = CardDefaults.cardElevation(
+                defaultElevation = 2.dp
+            )
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
+
+// ── bounceClick: press-scale micro-interaction ────────────────────────────
+
+/**
+ * Adds a subtle press animation (scale 1.0 → 0.97) using spring physics.
+ * Apply to clickable FlowCards, tab items, list rows, HeroPanel, etc.
+ */
+@Composable
+fun Modifier.bounceClick(
+    enabled: Boolean = true,
+    onClick: () -> Unit
+): Modifier {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (!enabled) 1f else if (isPressed) 0.97f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "bounce"
+    )
+    val focusAlpha by animateFloatAsState(
+        targetValue = if (isFocused) 1f else 0f,
+        animationSpec = tween(200),
+        label = "focus-ring-alpha"
+    )
+
+    return this
+        .graphicsLayer { scaleX = scale; scaleY = scale }
+        .then(
+            if (enabled) {
+                Modifier
+                    .drawWithContent {
+                        drawContent()
+                        // Draw a visible focus ring for keyboard/switch accessibility
+                        if (isFocused || focusAlpha > 0.01f) {
+                            drawRect(
+                                color = Color.White.copy(alpha = 0.25f * focusAlpha),
+                                topLeft = Offset.Zero,
+                                size = size,
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                    width = 3.dp.toPx()
+                                )
+                            )
+                        }
+                    }
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        onClick = onClick
+                    )
+            } else this
+        )
+}
+
+// ── Money formatting & date utilities ─────────────────────────────────────
 
 fun formatMoney(value: Double): String {
     val formatter = java.text.NumberFormat.getNumberInstance(java.util.Locale("en", "IN"))
@@ -882,13 +921,11 @@ fun formatMoney(value: Double): String {
 
 /**
  * Displays a currency value with a smooth count-up animation whenever [value] changes.
- * Uses a 700ms ease-out tween — the same duration as the web app.
- * Renders as a [Text] composable so it can be dropped in anywhere a Text is used.
  */
 @Composable
 fun AnimatedMoney(
     value: Double,
-    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.titleSmall,
+    style: TextStyle = MaterialTheme.typography.titleSmall,
     color: Color = MaterialTheme.colorScheme.onSurface,
     fontWeight: FontWeight? = null,
     maxLines: Int = 1,
@@ -937,10 +974,10 @@ fun parseDisplayDate(display: String): String {
 }
 
 @Composable
-fun incomingColor(): Color = AccentEmerald
+fun incomingColor(): Color = AccentTeal
 
 @Composable
-fun outgoingColor(): Color = dangerColor()
+fun outgoingColor(): Color = AccentOrange
 
 @Composable
 fun accountAccent(accountKind: com.radafiq.data.models.AccountKind): Color {
@@ -956,3 +993,247 @@ fun warningColor(): Color = MaterialTheme.colorScheme.tertiary
 
 @Composable
 fun dangerColor(): Color = MaterialTheme.colorScheme.error
+
+// ── Shimmer / Skeleton Loading Components ───────────────────────────────────
+
+/**
+ * Shimmer brush that animates a highlight traveling diagonally across the element.
+ * Apply via [Modifier.shimmer] instead of calling this directly.
+ */
+@Composable
+private fun shimmerBrush(): Brush {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+    val baseColor = if (useDarkTheme) Color(0xFF2A2A38) else Color(0xFFE8E6E0)
+    val highlightColor = if (useDarkTheme) Color(0xFF353545) else Color(0xFFF2F0EC)
+
+    val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
+    val translateX by infiniteTransition.animateFloat(
+        initialValue = -200f,
+        targetValue = 2000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer-offset"
+    )
+
+    return Brush.linearGradient(
+        colors = listOf(baseColor, highlightColor, baseColor),
+        start = Offset(translateX, 0f),
+        end = Offset(translateX + 300f, 300f)
+    )
+}
+
+/**
+ * Apply shimmer loading animation (skeleton pulse) to any component.
+ * When [loading] is false, renders the [content] normally.
+ */
+@Composable
+fun ShimmerLayout(
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    if (loading) {
+        val brush = shimmerBrush()
+        Box(
+            modifier = modifier
+                .clip(MaterialTheme.shapes.small)
+                .drawWithContent {
+                    drawRect(brush = brush, size = size)
+                }
+        )
+    } else {
+        content()
+    }
+}
+
+/**
+ * Skeleton card matching [FlowCard] layout — placeholder while data loads.
+ */
+@Composable
+fun ShimmerCard(
+    modifier: Modifier = Modifier,
+    lineCount: Int = 3,
+    lineHeight: Dp = 14.dp
+) {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+    val brush = shimmerBrush()
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        colors = CardDefaults.cardColors(
+            containerColor = if (useDarkTheme) DarkSurface else LightSurface,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            repeat(lineCount) { index ->
+                val widthFraction = when (index) {
+                    0 -> 0.45f   // title width
+                    1 -> 0.90f   // body width
+                    else -> 0.65f // shorter line
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(fraction = widthFraction)
+                        .height(lineHeight)
+                        .clip(RoundedCornerShape(4.dp))
+                        .drawWithContent {
+                            drawRect(brush = brush, size = size)
+                        }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Skeleton for [MetricPill] — left accent bar with two lines of text.
+ */
+@Composable
+fun ShimmerMetricPill(modifier: Modifier = Modifier) {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+    val brush = shimmerBrush()
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(if (useDarkTheme) DarkSurface else LightSurface)
+            .defaultMinSize(minHeight = 72.dp)
+    ) {
+        // Left accent bar shimmer
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
+                .background(
+                    if (useDarkTheme) Color(0xFF333344) else Color(0xFFDDD8D0)
+                )
+        )
+        Column(
+            modifier = Modifier.padding(start = 12.dp, top = 14.dp, bottom = 14.dp, end = 14.dp)
+        ) {
+            // Label line
+            Box(
+                modifier = Modifier
+                    .width(80.dp)
+                    .height(12.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .drawWithContent {
+                        drawRect(brush = brush, size = size)
+                    }
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            // Value line
+            Box(
+                modifier = Modifier
+                    .width(120.dp)
+                    .height(18.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .drawWithContent {
+                        drawRect(brush = brush, size = size)
+                    }
+            )
+        }
+    }
+}
+
+/**
+ * Skeleton for [HeroPanel] — title, large amount, subtitle.
+ */
+@Composable
+fun ShimmerHeroPanel(modifier: Modifier = Modifier) {
+    val useDarkTheme = LocalRadafiqDarkTheme.current
+    val brush = shimmerBrush()
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(
+            containerColor = if (useDarkTheme) DarkSurface else Color(0xFFEEF2FF),
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Title line
+            Box(
+                modifier = Modifier
+                    .width(100.dp)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .drawWithContent {
+                        drawRect(brush = brush, size = size)
+                    }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            // Large amount line
+            Box(
+                modifier = Modifier
+                    .width(200.dp)
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .drawWithContent {
+                        drawRect(brush = brush, size = size)
+                    }
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            // Subtitle line
+            Box(
+                modifier = Modifier
+                    .width(170.dp)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .drawWithContent {
+                        drawRect(brush = brush, size = size)
+                    }
+            )
+        }
+    }
+}
+
+/**
+ * Skeleton for [PageHeader] — title + subtitle shimmer lines.
+ */
+@Composable
+fun ShimmerPageHeader(modifier: Modifier = Modifier) {
+    val brush = shimmerBrush()
+    Box(modifier = modifier.fillMaxWidth()) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .width(160.dp)
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .drawWithContent {
+                        drawRect(brush = brush, size = size)
+                    }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction = 0.72f)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .drawWithContent {
+                        drawRect(brush = brush, size = size)
+                    }
+            )
+        }
+    }
+}

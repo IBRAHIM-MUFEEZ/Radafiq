@@ -55,6 +55,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -496,7 +497,7 @@ fun CustomerCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(20.dp))
-                        .clickable(onClick = onToggleExpanded)
+                        .bounceClick(onClick = onToggleExpanded)
                         .padding(4.dp)
                 ) {
                     AdaptiveHeaderRow(
@@ -507,12 +508,7 @@ fun CustomerCard(
                                         .width(48.dp)
                                         .height(48.dp)
                                         .clip(RoundedCornerShape(24.dp))
-                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
-                                        .border(
-                                            width = 1.dp,
-                                            color = Color.White.copy(alpha = 0.55f),
-                                            shape = RoundedCornerShape(24.dp)
-                                        ),
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
@@ -739,7 +735,7 @@ fun CustomerCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(20.dp))
-                        .clickable(onClick = onToggleExpanded)
+                        .bounceClick(onClick = onToggleExpanded)
                         .padding(vertical = 10.dp, horizontal = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -932,7 +928,7 @@ fun CustomerListRow(
 ) {
     FlowCard(
         accentColor = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.clickable(onClick = onClick)
+        modifier = Modifier.bounceClick(onClick = onClick)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1111,9 +1107,11 @@ fun CustomerDetailScreen(
         val totalUsed: Double,
         val totalDue: Double
     )
-    val accountBreakdowns = remember(customer.snapshotVersion) {
+    val accountBreakdowns = remember(customer.snapshotVersion, showSettled) {
         val today = LocalDate.now()
-        val visible = customer.transactions.filter { it.isVisibleInTransactions(today) }
+        val visible = customer.transactions.filter { t ->
+            t.isVisibleInTransactions(today) && (showSettled || !t.isSettled)
+        }
         val map = linkedMapOf<String, AccountBreakdown>()
         visible.forEach { t ->
             val key = "${t.accountKind.name}::${t.accountId}"
@@ -1949,54 +1947,58 @@ fun TransactionRow(
         transaction.partialPaidAmount > 0.0 &&
         remaining != transaction.amount
 
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f))
-            .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                shape = RoundedCornerShape(16.dp)
-            )
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .padding(vertical = 6.dp)
     ) {
-        // Main row: info left, amount + actions right
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            // Left: name + meta
-            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                Text(
-                    text = transaction.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    textDecoration = lineThrough,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = transaction.accountName,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha),
-                    modifier = Modifier.padding(top = 2.dp),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (transaction.accountKind == AccountKind.PERSON && transaction.personName.isNotBlank()) {
+        // Left accent bar
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .height(48.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(accountAccent(transaction.accountKind).copy(alpha = if (transaction.isSettled) 0.3f else 0.7f))
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        // Main content
+        Column(modifier = Modifier.weight(1f)) {
+            // Info left, amount + actions right
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                     Text(
-                        text = "From: ${transaction.personName}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = contentAlpha),
-                        modifier = Modifier.padding(top = 1.dp),
+                        text = transaction.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        textDecoration = lineThrough,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                }
-                // Running balance
+                    Text(
+                        text = transaction.accountName,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = contentAlpha),
+                        modifier = Modifier.padding(top = 2.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (transaction.accountKind == AccountKind.PERSON && transaction.personName.isNotBlank()) {
+                        Text(
+                            text = "From: ${transaction.personName}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = contentAlpha),
+                            modifier = Modifier.padding(top = 1.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    // Running balance
                 if (runningBalance >= 0.0) {
                     Text(
                         text = "Bal. ${formatMoney(runningBalance)}",
@@ -2102,6 +2104,7 @@ fun TransactionRow(
                 }
             }
         }
+    }
     }
 
     if (showPartialPaymentDialog) {
@@ -2489,17 +2492,8 @@ fun TransactionEditorDialog(
     val draft by vm.draftTransaction.collectAsState()
     val hasDraft = transaction == null && draft.customerId == customer.id && !draft.isEmpty
 
-    // Compute "frequently used" account IDs from ALL customers' transaction history
-    val allCustomers by vm.customers.collectAsState()
-    val frequentAccountIds = remember(allCustomers.sumOf { it.snapshotVersion }) {
-        val freq = mutableMapOf<String, Int>()
-        for (c in allCustomers) {
-            for (t in c.transactions) {
-                freq[t.accountId] = (freq[t.accountId] ?: 0) + 1
-            }
-        }
-        freq.filter { it.value > 0 }.keys
-    }
+    // Frequently-used account IDs — pre-computed in ViewModel off main thread
+    val frequentAccountIds by vm.frequentAccountIds.collectAsState()
 
     var transactionName by remember(transaction?.id) {
         mutableStateOf(if (hasDraft) draft.transactionName else transaction?.name.orEmpty())
@@ -2626,6 +2620,7 @@ fun TransactionEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = if (useDarkTheme) Color(0xFF121212) else MaterialTheme.colorScheme.surface,
         title = {
             Text(
                 text = if (transaction == null) "Add Transaction" else "Edit Transaction",
@@ -2711,7 +2706,8 @@ fun TransactionEditorDialog(
                         }
                         Switch(
                             checked = splitEnabled,
-                            onCheckedChange = { splitEnabled = it; emiEnabled = false }
+                            onCheckedChange = { splitEnabled = it; emiEnabled = false },
+                            colors = radafiqSwitchColors()
                         )
                     }
                 }
@@ -2817,14 +2813,15 @@ fun TransactionEditorDialog(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "Distribute EMI ${transaction!!.emiIndex + 1}/${transaction.emiTotal} across multiple accounts or persons",
+                                text = "Distribute EMI ${transaction.emiIndex + 1}/${transaction.emiTotal} across multiple accounts or persons",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Switch(
                             checked = emiSplitEnabled,
-                            onCheckedChange = { emiSplitEnabled = it }
+                            onCheckedChange = { emiSplitEnabled = it },
+                            colors = radafiqSwitchColors()
                         )
                     }
 
@@ -2847,7 +2844,7 @@ fun TransactionEditorDialog(
                             Spacer(modifier = Modifier.height(8.dp))
                         }
                         val emiSplitTotal = emiSplitEntries.sumOf { it.amount.toDoubleOrNull() ?: 0.0 }
-                        val emiOriginal = transaction!!.amount
+                        val emiOriginal = transaction.amount
                         Text(
                             text = "Split Total: ${formatMoney(emiSplitTotal)} / ${formatMoney(emiOriginal)}",
                             style = MaterialTheme.typography.bodySmall,
@@ -2948,7 +2945,7 @@ fun TransactionEditorDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Switch(checked = emiEnabled, onCheckedChange = { emiEnabled = it })
+                        Switch(checked = emiEnabled, onCheckedChange = { emiEnabled = it }, colors = radafiqSwitchColors())
                     }
 
                     if (emiEnabled) {
@@ -3014,6 +3011,7 @@ fun TransactionEditorDialog(
                                 }
                                 Switch(
                                     checked = emiManualDates,
+                                    colors = radafiqSwitchColors(),
                                     onCheckedChange = {
                                         emiManualDates = it
                                         emiDateOverrides = mapOf()
@@ -3330,22 +3328,28 @@ private fun DateSeparatorChip(date: String, today: java.time.LocalDate) {
             }
         }.getOrDefault(date)
     }
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        contentAlignment = Alignment.Center
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
+        androidx.compose.material3.HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f),
+            thickness = 1.dp
+        )
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(999.dp))
-                .padding(horizontal = 14.dp, vertical = 5.dp)
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
+        androidx.compose.material3.HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f),
+            thickness = 1.dp
         )
     }
 }
@@ -3414,21 +3418,27 @@ private fun SplitTransactionRow(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showSettleConfirm by remember { mutableStateOf<Boolean?>(null) } // null=hidden, true=marking paid, false=marking unpaid
 
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f))
-            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
-            .clickable { showDetailDialog = true }
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(vertical = 4.dp)
     ) {
-        // Header row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+        // Left accent bar
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .height(48.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            // Header row
+            Row(
+                modifier = Modifier.fillMaxWidth().bounceClick { showDetailDialog = true },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
@@ -3437,7 +3447,7 @@ private fun SplitTransactionRow(
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                            .background(MaterialTheme.colorScheme.primaryContainer)
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                     Text(
@@ -3545,8 +3555,7 @@ private fun SplitTransactionRow(
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-                        .border(1.dp, accent.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
                         .padding(horizontal = 10.dp, vertical = 8.dp)
                 ) {
                     Row(
@@ -3756,6 +3765,7 @@ private fun SplitTransactionRow(
                 }
             }
         )
+    }
     }
 }
 
@@ -4223,7 +4233,7 @@ private fun TransactionTypeDropdown(
             label = { Text("Transaction Type") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
-                .menuAnchor()
+                .menuAnchor(type = MenuAnchorType.PrimaryNotEditable, enabled = true)
                 .fillMaxWidth()
         )
 
@@ -4260,7 +4270,7 @@ private fun formatMonthYear(isoDate: String): String {
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun DatePickerDialog(
+internal fun DatePickerDialog(
     initialDateIso: String,
     onDateSelected: (String) -> Unit,
     onDismiss: () -> Unit
@@ -4396,6 +4406,10 @@ private fun ShareStatementDialog(
     val scope = rememberCoroutineScope()
     var isGenerating by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
+    var includeSettled by remember { mutableStateOf(true) }
+    var includeEmiDetails by remember { mutableStateOf(true) }
+    var includeSettlementHistory by remember { mutableStateOf(true) }
+    var includeSavingsDetails by remember { mutableStateOf(true) }
     val profileRepository = remember { com.radafiq.data.profile.UserProfileRepository() }
     val profileState by profileRepository.state.collectAsState()
     val userName = profileState.profile?.displayName?.takeIf { it.isNotBlank() }
@@ -4415,7 +4429,21 @@ private fun ShareStatementDialog(
         if (isGenerating) {
             try {
                 val generator = com.radafiq.data.backup.StatementGenerator(context)
-                val statementUri = generator.generateStatement(customer, userName, isDarkTheme).getOrThrow()
+                // Load settlement history
+                val history = try {
+                    val repo = com.radafiq.data.repository.FirebaseRepository()
+                    val txnPairs = customer.transactions.map { it.id to it.name }
+                    repo.getAllSettlementHistory(txnPairs)
+                } catch (_: Exception) { emptyList() }
+                val statementUri = generator.generateStatement(
+                    customer, userName, isDarkTheme,
+                    includeSettled = includeSettled,
+                    includeEmiDetails = includeEmiDetails,
+                    includeSettlementHistory = includeSettlementHistory,
+                    includeSavingsDetails = includeSavingsDetails,
+                    settlementHistory = history,
+                    savingsEntries = customer.savingsEntries
+                ).getOrThrow()
 
                 // Share the PDF
                 val shareIntent = android.content.Intent().apply {
@@ -4550,6 +4578,107 @@ private fun ShareStatementDialog(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "Include settled transactions",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        if (includeSettled) "Full statement with all transactions"
+                                        else "Only unsettled transactions",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = includeSettled,
+                                    colors = radafiqSwitchColors(),
+                                    onCheckedChange = { includeSettled = it }
+                                )
+                            }
+                            // -- EMI details toggle --
+                            if (customer.transactions.any { it.isEmi }) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "Include EMI details",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            if (includeEmiDetails) "EMI instalment schedule included"
+                                            else "EMI schedule excluded",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = includeEmiDetails,
+                                        colors = radafiqSwitchColors(),
+                                        onCheckedChange = { includeEmiDetails = it }
+                                    )
+                                }
+                            }
+                            // -- Settlement history toggle --
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "Include settlement history",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        if (includeSettlementHistory) "Past settlements included"
+                                        else "Settlement history excluded",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = includeSettlementHistory,
+                                    colors = radafiqSwitchColors(),
+                                    onCheckedChange = { includeSettlementHistory = it }
+                                )
+                            }
+                            // -- Savings details toggle --
+                            val hasSavings = customer.savingsEntries.isNotEmpty()
+                            if (hasSavings) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "Include savings details",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            if (includeSavingsDetails) "Savings deposits & withdrawals included"
+                                            else "Savings details excluded",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = includeSavingsDetails,
+                                        colors = radafiqSwitchColors(),
+                                        onCheckedChange = { includeSavingsDetails = it }
+                                    )
+                                }
+                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween

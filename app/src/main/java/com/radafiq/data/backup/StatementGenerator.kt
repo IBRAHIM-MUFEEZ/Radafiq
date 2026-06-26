@@ -14,6 +14,8 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import com.radafiq.data.models.CustomerSummary
 import com.radafiq.data.models.CustomerTransaction
+import com.radafiq.data.models.CustomerSettlementEntry
+import com.radafiq.data.models.SavingsEntry
 import com.radafiq.data.models.AccountKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -87,7 +89,13 @@ class StatementGenerator(private val context: Context) {
     suspend fun generateStatement(
         customer: CustomerSummary,
         generatedByName: String = "Radafiq User",
-        isDark: Boolean = true
+        isDark: Boolean = true,
+        includeSettled: Boolean = true,
+        includeEmiDetails: Boolean = true,
+        includeSettlementHistory: Boolean = true,
+        includeSavingsDetails: Boolean = true,
+        settlementHistory: List<CustomerSettlementEntry>? = null,
+        savingsEntries: List<SavingsEntry>? = null
     ): Result<Uri> {
         return withContext(Dispatchers.IO) {
             runCatching {
@@ -111,36 +119,45 @@ class StatementGenerator(private val context: Context) {
                 yPosition = drawHeader(canvas, customer, pageWidth, 32, regular, bold)
                 yPosition += 18
 
-                yPosition = drawSummary(canvas, customer, pageWidth, yPosition, regular, bold)
-                yPosition += 18
-
-                yPosition = drawDuesSummary(canvas, customer, pageWidth, yPosition, regular, bold)
-                yPosition += 18
-
-                // Transactions section
-                val transactions = customer.transactions
+                // Build ordered groups for transactions
+                val allTransactions = customer.transactions
                     .filter { it.isVisibleInTransactions() }
                     .sortedWith(compareByDescending<CustomerTransaction> { it.transactionDate }.thenByDescending { it.amount })
 
-                if (transactions.isNotEmpty()) {
-                    yPosition = drawSectionHeader(canvas, "Transactions", pageWidth, yPosition, bold)
-                    yPosition += 8
-
-                    // Group splits together
-                    val splitMap = linkedMapOf<String, MutableList<CustomerTransaction>>()
-                    val orderedGroups = mutableListOf<List<CustomerTransaction>>()
-                    transactions.forEach { t ->
-                        if (t.splitGroupId.isNotBlank()) {
-                            val list = splitMap.getOrPut(t.splitGroupId) { mutableListOf() }
-                            if (list.isEmpty()) orderedGroups.add(list)
-                            list.add(t)
-                        } else {
-                            orderedGroups.add(listOf(t))
-                        }
+                // Group splits together
+                val splitMap = linkedMapOf<String, MutableList<CustomerTransaction>>()
+                val allOrderedGroups = mutableListOf<List<CustomerTransaction>>()
+                allTransactions.forEach { t ->
+                    if (t.splitGroupId.isNotBlank()) {
+                        val list = splitMap.getOrPut(t.splitGroupId) { mutableListOf() }
+                        if (list.isEmpty()) allOrderedGroups.add(list)
+                        list.add(t)
+                    } else {
+                        allOrderedGroups.add(listOf(t))
                     }
+                }
 
-                    for (group in orderedGroups) {
-                        if (yPosition > pageHeight - 110) {
+                val settledGroups = allOrderedGroups.filter { g -> g.all { it.isSettled } }
+                val unsettledGroups = allOrderedGroups.filter { g -> !g.all { it.isSettled } }
+
+                // If including only unsettled, recompute totals from unsettled groups
+                val effectiveGroups = if (includeSettled) allOrderedGroups else unsettledGroups
+                val effectiveTotal = effectiveGroups.sumOf { g -> g.sumOf { it.amount } }
+                val effectivePaid = effectiveGroups.sumOf { g ->
+                    g.sumOf { it.partialPaidAmount } + if (g.all { it.isSettled }) g.sumOf { it.amount } else 0.0
+                }
+                val effectiveBalance = effectiveTotal - effectivePaid
+
+                yPosition = drawSummary(canvas, effectiveTotal, effectivePaid, effectiveBalance, pageWidth, yPosition, regular, bold)
+                yPosition += 18
+
+                yPosition = drawDuesSummary(canvas, effectiveGroups, pageWidth, yPosition, regular, bold)
+                yPosition += 18
+
+                fun drawGroupList(groups: List<List<CustomerTransaction>>, y: Int): Int {
+                    var yy = y
+                    for (group in groups) {
+                        if (yy > pageHeight - 110) {
                             drawFooter(canvas, pageNumber, pageHeight, generatedByName, regular)
                             pdfDocument.finishPage(page)
                             pageNumber++
@@ -148,20 +165,49 @@ class StatementGenerator(private val context: Context) {
                             page   = pdfDocument.startPage(newInfo)
                             canvas = page.canvas
                             drawPageBackground(canvas, pageWidth, pageHeight, isDark)
-                            yPosition = 40
+                            yy = 40
                         }
-                        if (group.size > 1) {
-                            yPosition = drawSplitTransactionRow(canvas, group, pageWidth, yPosition, regular, bold)
+                        yy = if (group.size > 1) {
+                            drawSplitTransactionRow(canvas, group, pageWidth, yy, regular, bold)
                         } else {
-                            yPosition = drawTransactionRow(canvas, group.first(), pageWidth, yPosition, regular, bold)
+                            drawTransactionRow(canvas, group.first(), pageWidth, yy, regular, bold)
                         }
                     }
+                    return yy
+                }
+
+                // If including settled, draw settled transactions section
+                if (includeSettled && settledGroups.isNotEmpty()) {
+                    yPosition = drawSectionHeader(canvas, "Settled Transactions (${settledGroups.size})", pageWidth, yPosition, bold)
+                    yPosition += 8
+                    yPosition = drawGroupList(settledGroups, yPosition)
+                    yPosition += 12
+                }
+
+                // Unsettled transactions — always shown
+                if (unsettledGroups.isNotEmpty()) {
+                    val unsettledLabel = if (includeSettled) "Unsettled" else "All Transactions"
+                    yPosition = drawSectionHeader(canvas, "$unsettledLabel Transactions (${unsettledGroups.size})", pageWidth, yPosition, bold)
+                    yPosition += 8
+                    yPosition = drawGroupList(unsettledGroups, yPosition)
+                    yPosition += 12
                 }
 
                 // EMI schedule
                 val emiTransactions = customer.transactions.filter { it.isEmi }
-                if (emiTransactions.isNotEmpty()) {
-                    if (yPosition > pageHeight - 160) {
+                if (includeEmiDetails && emiTransactions.isNotEmpty()) {
+                    // Pre-calculate actual EMI schedule height to prevent overflow past footer.
+                    // The layout constants below match those inside drawEmiSchedule:
+                    //   - 34 = 16 (pre-section gap) + 14 (drawSectionHeader return) + 4 (yPos += 4)
+                    //   - 40 = 32 (headerRowH) + 8 (post-group spacing)
+                    //   - 38 = 36 (rowH) + 2 (row advance)
+                    // Footer area (~44px at page bottom) is reserved separately.
+                    val emiGrouped = emiTransactions.groupBy { it.emiGroupId }
+                    val emiScheduleHeight = 34 + emiGrouped.values.sumOf { txns ->
+                        val sorted = txns.sortedBy { it.emiIndex }
+                        40 + sorted.size * 38
+                    }
+                    if (yPosition > pageHeight - emiScheduleHeight - 44) {
                         drawFooter(canvas, pageNumber, pageHeight, generatedByName, regular)
                         pdfDocument.finishPage(page)
                         pageNumber++
@@ -173,6 +219,62 @@ class StatementGenerator(private val context: Context) {
                     }
                     yPosition += 16
                     yPosition = drawEmiSchedule(canvas, emiTransactions, pageWidth, yPosition, regular, bold)
+                }
+
+                // Settlement history
+                if (includeSettlementHistory && !settlementHistory.isNullOrEmpty()) {
+                    yPosition += 12
+                    if (yPosition > pageHeight - 160) {
+                        drawFooter(canvas, pageNumber, pageHeight, generatedByName, regular)
+                        pdfDocument.finishPage(page)
+                        pageNumber++
+                        val newInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+                        page   = pdfDocument.startPage(newInfo)
+                        canvas = page.canvas
+                        drawPageBackground(canvas, pageWidth, pageHeight, isDark)
+                        yPosition = 40
+                    }
+                    yPosition = drawSectionHeader(canvas, "Settlement History", pageWidth, yPosition, bold)
+                    yPosition += 8
+
+                    val sortedHistory = settlementHistory.sortedByDescending { it.timestamp }
+                    // Hoisted paints for settlement history rows
+                    val shRowFillPaint = Paint().apply { color = BG_RAISED }
+                    val shDatePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 8f; typeface = bold; color = TEXT_MUTED }
+                    val shNamePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 10f; typeface = bold; color = TEXT_PRIMARY }
+                    val shLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 8f; typeface = regular; color = TEXT_MUTED }
+                    val shSepPaint = Paint().apply { strokeWidth = 0.5f; color = OUTLINE }
+                    for (entry in sortedHistory) {
+                        if (yPosition > pageHeight - 90) {
+                            drawFooter(canvas, pageNumber, pageHeight, generatedByName, regular)
+                            pdfDocument.finishPage(page)
+                            pageNumber++
+                            val newInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+                            page   = pdfDocument.startPage(newInfo)
+                            canvas = page.canvas
+                            drawPageBackground(canvas, pageWidth, pageHeight, isDark)
+                            yPosition = 40
+                        }
+                        yPosition = drawSettlementHistoryRow(canvas, entry, pageWidth, yPosition, regular, bold, shRowFillPaint, shDatePaint, shNamePaint, shLabelPaint, shSepPaint)
+                    }
+                    yPosition += 8
+                }
+
+                // Savings details
+                val effectiveSavings = savingsEntries ?: customer.savingsEntries
+                if (includeSavingsDetails && effectiveSavings.isNotEmpty()) {
+                    yPosition += 12
+                    if (yPosition > pageHeight - 180) {
+                        drawFooter(canvas, pageNumber, pageHeight, generatedByName, regular)
+                        pdfDocument.finishPage(page)
+                        pageNumber++
+                        val newInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+                        page   = pdfDocument.startPage(newInfo)
+                        canvas = page.canvas
+                        drawPageBackground(canvas, pageWidth, pageHeight, isDark)
+                        yPosition = 40
+                    }
+                    yPosition = drawSavingsSection(canvas, effectiveSavings, pageWidth, pageHeight, yPosition, regular, bold)
                 }
 
                 drawFooter(canvas, pageNumber, pageHeight, generatedByName, regular)
@@ -200,13 +302,13 @@ class StatementGenerator(private val context: Context) {
                 )
             }
             canvas.drawRect(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat(), bgPaint)
-            // Subtle indigo-cyan glow blobs
-            val glow1 = Paint().apply { color = 0x2E6366F1.toInt() }  // indigo
-            val glow2 = Paint().apply { color = 0x1E10B981.toInt() }  // emerald
-            val glow3 = Paint().apply { color = 0x1806B6D4.toInt() }  // cyan
-            canvas.drawCircle(pageWidth * 0.18f, pageHeight * 0.10f, 90f, glow1)
-            canvas.drawCircle(pageWidth * 0.92f, pageHeight * 0.18f, 75f, glow2)
-            canvas.drawCircle(pageWidth * 0.76f, pageHeight * 0.86f, 70f, glow3)
+            // Subtle indigo-cyan glow blobs — tucked into page corners away from content
+            val glow1 = Paint().apply { color = 0x1A6366F1.toInt() }  // indigo (reduced alpha)
+            val glow2 = Paint().apply { color = 0x1210B981.toInt() }  // emerald (reduced alpha)
+            val glow3 = Paint().apply { color = 0x0F06B6D4.toInt() }  // cyan (reduced alpha)
+            canvas.drawCircle(pageWidth * 0.92f, pageHeight * 0.04f, 70f, glow1)
+            canvas.drawCircle(pageWidth * 0.06f, pageHeight * 0.96f, 80f, glow2)
+            canvas.drawCircle(pageWidth * 0.95f, pageHeight * 0.93f, 60f, glow3)
         } else {
             val bgPaint = Paint().apply {
                 shader = LinearGradient(
@@ -217,11 +319,11 @@ class StatementGenerator(private val context: Context) {
                 )
             }
             canvas.drawRect(0f, 0f, pageWidth.toFloat(), pageHeight.toFloat(), bgPaint)
-            // Subtle light indigo glow blobs
-            val glow1 = Paint().apply { color = 0x186366F1.toInt() }  // indigo
-            val glow2 = Paint().apply { color = 0x1010B981.toInt() }  // emerald
-            canvas.drawCircle(pageWidth * 0.18f, pageHeight * 0.10f, 80f, glow1)
-            canvas.drawCircle(pageWidth * 0.88f, pageHeight * 0.15f, 65f, glow2)
+            // Subtle light indigo glow blobs — tucked into page corners away from content
+            val glow1 = Paint().apply { color = 0x126366F1.toInt() }  // indigo (reduced alpha)
+            val glow2 = Paint().apply { color = 0x0C10B981.toInt() }  // emerald (reduced alpha)
+            canvas.drawCircle(pageWidth * 0.93f, pageHeight * 0.04f, 65f, glow1)
+            canvas.drawCircle(pageWidth * 0.05f, pageHeight * 0.95f, 70f, glow2)
         }
     }
 
@@ -306,7 +408,9 @@ class StatementGenerator(private val context: Context) {
     // ── Summary: 3 metric boxes ───────────────────────────────────────────────
     private fun drawSummary(
         canvas: Canvas,
-        customer: CustomerSummary,
+        totalAmount: Double,
+        paidAmount: Double,
+        balance: Double,
         pageWidth: Int,
         startY: Int,
         regular: Typeface,
@@ -314,11 +418,10 @@ class StatementGenerator(private val context: Context) {
     ): Int {
         // FIX-11: "Customer Paid" should reflect actual payments (settled + partial),
         // not the manually-entered creditDueAmount field.
-        val actualPaid = customer.settledTransactionAmount + customer.partialPaidAmount
         val boxes = listOf(
-            Triple("Total Used",    formatMoney(customer.totalAmount),    PRIMARY),
-            Triple("Customer Paid", formatMoney(actualPaid),              GREEN_BRAND),
-            Triple("Balance Due",   formatMoney(customer.balance),        if (customer.balance > 0) RED_ACCENT else GREEN_BRAND)
+            Triple("Total Used",    formatMoney(totalAmount),   PRIMARY),
+            Triple("Customer Paid", formatMoney(paidAmount),    GREEN_BRAND),
+            Triple("Balance Due",   formatMoney(balance),       if (balance > 0) RED_ACCENT else GREEN_BRAND)
         )
         return drawMetricBoxRow(canvas, boxes, pageWidth, startY, regular, bold)
     }
@@ -326,27 +429,12 @@ class StatementGenerator(private val context: Context) {
     // ── Dues summary: paid vs unpaid transaction counts ───────────────────────
     private fun drawDuesSummary(
         canvas: Canvas,
-        customer: CustomerSummary,
+        logicalGroups: List<List<CustomerTransaction>>,
         pageWidth: Int,
         startY: Int,
         regular: Typeface,
         bold: Typeface
     ): Int {
-        val visible = customer.transactions.filter { it.isVisibleInTransactions() }
-
-        // Group splits so each split group counts as 1 logical transaction
-        val splitGroups = linkedMapOf<String, MutableList<CustomerTransaction>>()
-        val logicalGroups = mutableListOf<List<CustomerTransaction>>()
-        visible.forEach { t ->
-            if (t.splitGroupId.isNotBlank()) {
-                val list = splitGroups.getOrPut(t.splitGroupId) { mutableListOf() }
-                if (list.isEmpty()) logicalGroups.add(list)
-                list.add(t)
-            } else {
-                logicalGroups.add(listOf(t))
-            }
-        }
-
         val totalTxns = logicalGroups.size
         val settled = logicalGroups.count { group -> group.all { it.isSettled } }
         val partial = logicalGroups.count { group ->
@@ -629,7 +717,7 @@ class StatementGenerator(private val context: Context) {
         return startY + rowH + 4
     }
 
-    // ── EMI schedule ──────────────────────────────────────────────────────────
+    // ── EMI schedule with glass-morphism card styling ──────────────────────────
     private fun drawEmiSchedule(
         canvas: Canvas,
         emiTransactions: List<CustomerTransaction>,
@@ -642,38 +730,132 @@ class StatementGenerator(private val context: Context) {
         yPos += 4
 
         val grouped = emiTransactions.groupBy { it.emiGroupId }
+        val cardLeft = 40f
+        val cardRight = (pageWidth - 40).toFloat()
 
         for ((_, txns) in grouped) {
             val sorted = txns.sortedBy { it.emiIndex }
             val first  = sorted.first()
+            val groupName = first.name.substringBefore(" — EMI").ifBlank { first.name }
+            val headerRowH = 32
+            val rowH = 36
 
-            val groupPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                textSize = 10f
-                typeface = bold
-                color    = TEAL
-            }
-            canvas.drawText("${first.name.substringBefore(" — EMI")} — ${sorted.size} instalments", 40f, yPos.toFloat(), groupPaint)
-            yPos += 14
+            // Card background for EMI group
+            val cardFill = Paint().apply { color = BG_RAISED }
+            val groupHeight = headerRowH + sorted.size * (rowH + 2) + 4
+            val cardTop = yPos.toFloat()
+            val cardBot = (yPos + groupHeight).toFloat()
 
-            val cellPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                textSize = 9f
-                typeface = regular
-                color    = TEXT_MUTED
+            // Create card path for clipping accent bar to rounded corners
+            val cardRadius = 10f
+            val cardRect = RectF(cardLeft, cardTop, cardRight, cardBot)
+            val cardPath = Path().apply {
+                addRoundRect(cardRect, cardRadius, cardRadius, Path.Direction.CW)
             }
+
+            // Fill card background
+            canvas.drawRoundRect(cardRect, cardRadius, cardRadius, cardFill)
+
+            // Left accent bar — clipped to card shape so corners don't bleed
+            canvas.save()
+            canvas.clipPath(cardPath)
+            val barPaint = Paint().apply { color = TEAL }
+            canvas.drawRect(RectF(cardLeft, cardTop, cardLeft + 4f, cardBot), barPaint)
+            canvas.restore()
+
+            // Border
+            val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 1f
+                color = OUTLINE
+            }
+            canvas.drawRoundRect(cardRect, cardRadius, cardRadius, borderPaint)
+
+            // Group header row — slightly darker background
+            val headerBgPaint = Paint().apply { color = if (isDark()) 0xFF1A1E42.toInt() else 0xFFEEF2FF.toInt() }
+            canvas.drawRoundRect(
+                RectF(cardLeft + 4f, cardTop, cardRight, cardTop + headerRowH),
+                0f, 0f, headerBgPaint
+            )
+
+            val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = 10f; typeface = bold; color = TEAL
+            }
+            val countPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = 9f; typeface = regular; color = TEXT_MUTED
+                textAlign = Paint.Align.RIGHT
+            }
+            val paidCount = sorted.count { it.isSettled }
+            canvas.drawText(groupName, cardLeft + 14f, yPos + 20f, namePaint)
+            canvas.drawText(
+                "$paidCount/${sorted.size} paid",
+                cardRight - 14f, yPos + 20f, countPaint
+            )
+            yPos += headerRowH
+
+            // Separator after header
+            val sepPaint = Paint().apply { strokeWidth = 0.5f; color = OUTLINE }
+            canvas.drawLine(cardLeft + 4f, yPos.toFloat(), cardRight, yPos.toFloat(), sepPaint)
+
+            // Installment rows
+            val instDatePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = 8f; typeface = bold; color = TEXT_MUTED
+            }
+            val instLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = 9f; typeface = regular; color = TEXT_PRIMARY
+            }
+            val instAmountPaintRight = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = 10f; typeface = bold; textAlign = Paint.Align.RIGHT
+            }
+            val instStatusPaintRight = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = 8f; typeface = bold; textAlign = Paint.Align.RIGHT
+            }
+
             for (tx in sorted) {
                 val statusColor = if (tx.isSettled) GREEN_SETTLED else ORANGE_PENDING
+                instAmountPaintRight.color = statusColor
+                instStatusPaintRight.color = statusColor
+
+                // Status dot — vertically centered
                 val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = statusColor }
-                canvas.drawCircle(50f, yPos - 3f, 3f, dot)
-                canvas.drawText("EMI ${tx.emiIndex + 1}/${tx.emiTotal}", 60f, yPos.toFloat(), cellPaint)
-                canvas.drawText(tx.transactionDate, 140f, yPos.toFloat(), cellPaint)
-                canvas.drawText(formatMoney(tx.amount), (pageWidth - 100).toFloat(), yPos.toFloat(), cellPaint)
-                yPos += 13
+                canvas.drawCircle(cardLeft + 14f, yPos + rowH / 2f, 3.5f, dot)
+
+                val leftCol = cardLeft + 28f
+
+                canvas.drawText(
+                    "EMI ${tx.emiIndex + 1}/${tx.emiTotal}",
+                    leftCol, yPos + 14f, instDatePaint
+                )
+                canvas.drawText(
+                    tx.transactionDate,
+                    leftCol, yPos + 28f, instLabelPaint
+                )
+
+                // Amount + status — right-aligned from same edge
+                val rightEdge = cardRight - 14f
+                canvas.drawText(
+                    formatMoney(tx.amount),
+                    rightEdge, yPos + 14f, instAmountPaintRight
+                )
+                // Same status label length: pad with leading space so alignment matches
+                val statusLabel = if (tx.isSettled) "Paid ✓" else "Pending"
+                canvas.drawText(statusLabel, rightEdge, yPos + 28f, instStatusPaintRight)
+
+                // Row separator
+                canvas.drawLine(
+                    cardLeft + 12f, (yPos + rowH).toFloat(),
+                    cardRight - 4f, (yPos + rowH).toFloat(), sepPaint
+                )
+                yPos += rowH + 2
             }
             yPos += 8
         }
 
         return yPos
     }
+
+    /** Helper to determine if the active palette is dark mode. */
+    private fun isDark(): Boolean = BG_DEEP == DARK_BG_DEEP
 
     // ── Footer ────────────────────────────────────────────────────────────────
     private fun drawFooter(
@@ -712,6 +894,113 @@ class StatementGenerator(private val context: Context) {
 
         // Right: page + branding
         canvas.drawText("Page $pageNumber  •  Radafiq", 430f, (pageHeight - 16).toFloat(), rightPaint)
+    }
+
+    private fun drawSettlementHistoryRow(
+        canvas: Canvas,
+        entry: CustomerSettlementEntry,
+        pageWidth: Int,
+        startY: Int,
+        regular: Typeface,
+        bold: Typeface,
+        rowFillPaint: Paint,
+        datePaint: Paint,
+        namePaint: Paint,
+        labelPaint: Paint,
+        sepPaint: Paint
+    ): Int {
+        val rowH   = 38
+        val left   = 40f
+        val right  = (pageWidth - 40).toFloat()
+
+        val entryColor = when (entry.type) {
+            "settled" -> GREEN_SETTLED
+            "partial" -> ORANGE_PENDING
+            else -> RED_ACCENT
+        }
+
+        canvas.drawRoundRect(RectF(left, startY.toFloat(), right, (startY + rowH).toFloat()), 8f, 8f, rowFillPaint)
+
+        val barPaint = Paint().apply { color = entryColor }
+        canvas.drawRoundRect(RectF(left, startY.toFloat(), left + 4f, (startY + rowH).toFloat()), 4f, 4f, barPaint)
+
+        val amountPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; typeface = bold; color = entryColor }
+
+        val textTop = startY + 14f
+        val textBot = startY + 28f
+
+        canvas.drawText(entry.date, left + 10f, textTop, datePaint)
+        canvas.drawText(entry.transactionName, left + 80f, textTop, namePaint)
+        canvas.drawText(entry.label, left + 80f, textBot, labelPaint)
+        canvas.drawText(formatMoney(entry.amount), right - 120f, textTop, amountPaint)
+
+        canvas.drawLine(left, (startY + rowH).toFloat(), right, (startY + rowH).toFloat(), sepPaint)
+
+        return startY + rowH + 4
+    }
+
+    private fun drawSavingsSection(
+        canvas: Canvas,
+        entries: List<SavingsEntry>,
+        pageWidth: Int,
+        pageHeight: Int,
+        startY: Int,
+        regular: Typeface,
+        bold: Typeface
+    ): Int {
+        var yPos = drawSectionHeader(canvas, "Savings Details", pageWidth, startY, bold)
+        yPos += 8
+
+        val sorted = entries.sortedByDescending { it.date }
+        val totalDeposits = sorted.filter { it.type == com.radafiq.data.models.SavingsType.DEPOSIT }.sumOf { it.amount }
+        val totalWithdrawals = sorted.filter { it.type == com.radafiq.data.models.SavingsType.WITHDRAWAL }.sumOf { it.amount }
+        val netSavings = totalDeposits - totalWithdrawals
+
+        val boxes = listOf(
+            Triple("Total Deposits",  formatMoney(totalDeposits),   GREEN_BRAND),
+            Triple("Total Withdrawn", formatMoney(totalWithdrawals), ORANGE_PENDING),
+            Triple("Net Savings",     formatMoney(netSavings),      if (netSavings >= 0) GREEN_BRAND else RED_ACCENT)
+        )
+        yPos = drawMetricBoxRow(canvas, boxes, pageWidth, yPos, regular, bold)
+        yPos += 10
+
+        // Hoisted paints — same properties for all entries, created once
+        val rowFillPaint = Paint().apply { color = BG_RAISED }
+        val datePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 8f; typeface = bold; color = TEXT_MUTED }
+        val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 10f; typeface = bold; color = TEXT_PRIMARY }
+        val notePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 8f; typeface = regular; color = TEXT_MUTED }
+        val sepPaint = Paint().apply { strokeWidth = 0.5f; color = OUTLINE }
+
+        for (entry in sorted) {
+            if (yPos > pageHeight - 90) break // prevent overflow (matches other section thresholds)
+            val rowH   = 38
+            val left   = 40f
+            val right  = (pageWidth - 40).toFloat()
+
+            val isDeposit = entry.type == com.radafiq.data.models.SavingsType.DEPOSIT
+            val entryColor = if (isDeposit) GREEN_BRAND else RED_ACCENT
+
+            canvas.drawRoundRect(RectF(left, yPos.toFloat(), right, (yPos + rowH).toFloat()), 8f, 8f, rowFillPaint)
+
+            val barPaint = Paint().apply { color = entryColor }
+            canvas.drawRoundRect(RectF(left, yPos.toFloat(), left + 4f, (yPos + rowH).toFloat()), 4f, 4f, barPaint)
+
+            val amountPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; typeface = bold; color = entryColor }
+
+            val label = if (isDeposit) "Deposit" else "Withdrawal"
+            canvas.drawText(entry.date, left + 10f, yPos + 14f, datePaint)
+            canvas.drawText(label, left + 80f, yPos + 14f, namePaint)
+            if (entry.note.isNotBlank()) {
+                canvas.drawText(entry.note, left + 80f, yPos + 28f, notePaint)
+            }
+            canvas.drawText(formatMoney(entry.amount), right - 120f, yPos + 14f, amountPaint)
+
+            canvas.drawLine(left, (yPos + rowH).toFloat(), right, (yPos + rowH).toFloat(), sepPaint)
+
+            yPos += rowH + 4
+        }
+
+        return yPos
     }
 
     private fun formatMoney(amount: Double): String {

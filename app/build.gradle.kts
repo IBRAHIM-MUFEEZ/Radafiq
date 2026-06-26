@@ -1,9 +1,10 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.services)
 }
+
+import java.io.File
 
 android {
     namespace = "com.radafiq"
@@ -69,14 +70,66 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    kotlin {
-        compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
-        }
-    }
-
     buildFeatures {
         compose = true
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+}
+
+val pythonPath = "C:\\Python314\\python.exe"
+
+tasks.whenTaskAdded {
+    if (name.endsWith("NativeLibs")) {
+        doLast {
+            val variantName = name.removePrefix("merge").removeSuffix("NativeLibs")
+                .replaceFirstChar { it.lowercaseChar() }
+            val buildDir = layout.buildDirectory.get().asFile
+            val mergedDir = File(buildDir, "intermediates/merged_native_libs/$variantName/$name/out/lib")
+            if (mergedDir.exists()) {
+                logger.lifecycle("Patching ELF alignment for 16 KB pages in $mergedDir")
+                val cmd = listOf(pythonPath, "scripts/patch_elf_16kb.py", mergedDir.absolutePath)
+                val proc = ProcessBuilder(cmd)
+                    .directory(rootProject.projectDir)
+                    .redirectErrorStream(true)
+                    .start()
+                val output = proc.inputStream.reader().readText()
+                val exitCode = proc.waitFor()
+                logger.lifecycle(output.trim())
+                if (exitCode != 0) {
+                    throw RuntimeException("ELF patching failed with exit code $exitCode")
+                }
+            }
+        }
+    }
+}
+
+tasks.whenTaskAdded {
+    if (name.startsWith("strip") && name.endsWith("DebugSymbols")) {
+        doLast {
+            val variantName = name.removePrefix("strip").removeSuffix("DebugSymbols")
+                .replaceFirstChar { it.lowercaseChar() }
+            val buildDir = layout.buildDirectory.get().asFile
+            val strippedDir = File(buildDir, "intermediates/stripped_native_libs/$variantName/$name/out/lib")
+            if (strippedDir.exists()) {
+                logger.lifecycle("Patching ELF alignment for 16 KB pages in stripped libs: $strippedDir")
+                val cmd = listOf(pythonPath, "scripts/patch_elf_16kb.py", strippedDir.absolutePath)
+                val proc = ProcessBuilder(cmd)
+                    .directory(rootProject.projectDir)
+                    .redirectErrorStream(true)
+                    .start()
+                val output = proc.inputStream.reader().readText()
+                val exitCode = proc.waitFor()
+                logger.lifecycle(output.trim())
+                if (exitCode != 0) {
+                    throw RuntimeException("ELF patching failed with exit code $exitCode")
+                }
+            }
+        }
     }
 }
 
@@ -84,6 +137,9 @@ dependencies {
 
     // Core
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core-splashscreen:1.0.1")
+    // Profile Installer — installs baseline profile on API 24+ for AOT compilation of startup code
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 
@@ -118,12 +174,18 @@ dependencies {
     implementation("com.google.firebase:firebase-analytics-ktx")
     implementation("com.google.firebase:firebase-auth-ktx")
 
-    // Google Sign-In
-    implementation("com.google.android.gms:play-services-auth:21.3.0")
+    // Google Sign-In (Credential Manager — replaces old GoogleSignIn APIs)
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    // Drive token acquisition (kept for Drive backup/restore; @Suppress("DEPRECATION") applied)
     implementation("com.google.android.gms:play-services-auth-base:18.0.10")
 
     // Profile photo loading — FIX-22: Updated Coil
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // dotLottie animation
+    implementation("com.github.LottieFiles:dotlottie-android:0.5.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

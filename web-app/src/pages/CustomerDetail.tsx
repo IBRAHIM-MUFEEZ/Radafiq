@@ -1,12 +1,26 @@
 import React, { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Check, PiggyBank, ChevronDown, ChevronUp, Download, History } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { ArrowLeft, Plus, Trash2, Check, PiggyBank, ChevronDown, ChevronUp, ChevronRight, Download, History } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatMoney, formatDate, todayString, evaluateExpression } from '../utils/format';
 import { CustomerTransaction, SettlementHistoryEntry, SETTLEMENT_TYPE_LABELS, isVisibleInTransactions, isEmi, isSplit, isEmiOverdue, daysUntilDue, AccountKind, AccountOption, SplitEntry, ACCOUNT_KIND_LABELS, getAccountOptions, ALL_ACCOUNTS } from '../types/models';
 import { generateAndDownloadStatement } from '../utils/statementGenerator';
 import { getAllSettlementHistory } from '../services/firebaseRepository';
 import AnimatedMoney from '../components/AnimatedMoney';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.06, delayChildren: 0.08 },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 14 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' as const } },
+};
 
 type TxnFilter = 'ALL' | 'bank_account' | 'credit_card' | 'person';
 
@@ -53,7 +67,14 @@ function TransactionRow({
   })();
 
   return (
-    <div className="txn-row" style={{ borderLeft: overdue && !txn.isSettled ? '3px solid var(--red)' : undefined }}>
+    <motion.div
+      className="txn-row"
+      style={{ borderLeft: overdue && !txn.isSettled ? '3px solid var(--red)' : undefined }}
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.3, ease: 'easeOut' }}
+      whileHover={{ background: 'color-mix(in srgb, var(--surface) 95%, var(--primary) 5%)', transition: { duration: 0.15 } }}
+    >
       <div className="txn-dot" style={{ background: statusColor }} />
       <div className="txn-info">
         <div className="txn-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -127,7 +148,7 @@ function TransactionRow({
           </button>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -162,12 +183,18 @@ function SplitGroupRow({
   const date = splits[0]?.transactionDate ?? '';
 
   return (
-    <div style={{ borderBottom: '1px solid var(--outline)' }}>
+    <motion.div
+      style={{ borderBottom: '1px solid var(--outline)' }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3, ease: 'easeOut' }}
+    >
       {/* Group header — click to expand/collapse */}
-      <div
+      <motion.div
         className="txn-row"
         style={{ borderBottom: 'none', cursor: 'pointer', paddingBottom: expanded ? '0.5rem' : '0.875rem' }}
         onClick={onToggle}
+        whileHover={{ background: 'color-mix(in srgb, var(--surface) 95%, var(--primary) 5%)' }}
       >
         <div className="txn-dot" style={{ background: groupStatusColor }} />
         <div className="txn-info">
@@ -223,19 +250,24 @@ function SplitGroupRow({
             </div>
           </div>
         </div>
-      </div>
+      </motion.div>
 
       {/* Expanded split entries */}
       {expanded && (
-        <div style={{
-          marginLeft: 22,
-          marginBottom: '0.75rem',
-          borderLeft: '2px solid var(--outline)',
-          paddingLeft: '0.75rem',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 0,
-        }}>
+        <motion.div
+          style={{
+            marginLeft: 22,
+            marginBottom: '0.75rem',
+            borderLeft: '2px solid var(--outline)',
+            paddingLeft: '0.75rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 0,
+          }}
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25, ease: 'easeOut' }}
+        >
           {splits.map(split => {
             const splitStatusColor = split.isSettled ? 'var(--green)' : split.partialPaidAmount > 0 ? 'var(--orange)' : 'var(--red)';
             const remaining = Math.max(0, split.amount - split.partialPaidAmount);
@@ -320,9 +352,9 @@ function SplitGroupRow({
               </div>
             );
           })}
-        </div>
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -766,14 +798,26 @@ export default function CustomerDetail() {
   };
 
   return (
-    <div className="page-content">
+    <motion.div
+      className="page-content"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
       {/* Back */}
-      <button className="btn btn-ghost" style={{ marginBottom: '1rem' }} onClick={() => navigate('/customers')}>
-        <ArrowLeft size={18} /> Customers
-      </button>
+      <motion.div variants={itemVariants}>
+        <button className="btn btn-ghost" style={{ marginBottom: '1rem' }} onClick={() => navigate('/customers')}>
+          <ArrowLeft size={18} /> Customers
+        </button>
+      </motion.div>
 
       {/* Customer header */}
-      <div className="flow-card" style={{ marginBottom: '1rem' }}>
+      <motion.div
+        className="flow-card"
+        style={{ marginBottom: '1rem' }}
+        variants={itemVariants}
+        whileHover={{ y: -1 }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
           <div className="avatar" style={{ width: 52, height: 52, fontSize: '1.125rem' }}>
             {customer.name.slice(0, 2).toUpperCase()}
@@ -783,32 +827,48 @@ export default function CustomerDetail() {
             <p className="text-muted text-sm">{customer.transactions.length} transaction(s)</p>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button
+            <motion.button
               className="btn btn-ghost btn-sm"
-              onClick={() => {
+              onClick={async () => {
                 const userName = profile?.displayName?.trim() || profile?.email?.trim() || 'Radafiq User';
-                generateAndDownloadStatement(customer, userName, false);
+                let history: (SettlementHistoryEntry & { transactionName: string })[] | undefined;
+                if (user) {
+                  try {
+                    history = await getAllSettlementHistory(
+                      user.uid,
+                      customer.transactions.map(t => ({ id: t.id, name: t.name }))
+                    );
+                  } catch { /* settlement history is optional */ }
+                }
+                generateAndDownloadStatement(
+                  customer, userName, false,
+                  history,
+                  customer.savingsEntries
+                );
               }}
               title="Download Statement PDF"
               style={{ color: 'var(--primary)' }}
+              whileTap={{ scale: 0.9 }}
             >
               <Download size={16} />
-            </button>
-            <button
+            </motion.button>
+            <motion.button
               className="btn btn-ghost btn-sm"
               onClick={() => navigate(`/customers/${customer.id}/savings`)}
               title="Savings"
+              whileTap={{ scale: 0.9 }}
             >
               <PiggyBank size={16} />
-            </button>
-            <button
+            </motion.button>
+            <motion.button
               className="btn btn-ghost btn-sm"
               style={{ color: 'var(--red)' }}
               onClick={() => setConfirmDeleteCustomer(true)}
               title="Delete customer"
+              whileTap={{ scale: 0.9 }}
             >
               <Trash2 size={16} />
-            </button>
+            </motion.button>
           </div>
         </div>
 
@@ -842,10 +902,15 @@ export default function CustomerDetail() {
             <History size={14} /> History
           </button>
         </div>
-      </div>
+      </motion.div>
 
       {/* Account Breakdown */}
-      <div className="flow-card" style={{ marginBottom: '1rem', padding: '0.875rem' }}>
+      <motion.div
+        className="flow-card"
+        style={{ marginBottom: '1rem', padding: '0.875rem' }}
+        variants={itemVariants}
+        whileHover={{ y: -1 }}
+      >
         <p style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.625rem' }}>
           Account Breakdown
         </p>
@@ -939,37 +1004,80 @@ export default function CustomerDetail() {
             })}
           </div>
         )}
-      </div>
+      </motion.div>
+
+      {/* Savings balance (only if there are savings) — matches Android */}
+      {(customer.savingsBalance > 0 || customer.savingsEntries.length > 0) && (
+        <motion.div
+          className="savings-section"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '0.625rem 0.75rem', borderRadius: 8,
+            background: 'var(--bg-secondary)', marginBottom: '0.75rem',
+            cursor: 'pointer'
+          }}
+          onClick={() => navigate(`/customers/${customer.id}/savings`)}
+          variants={itemVariants}
+          whileHover={{ y: -1, boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}
+          whileTap={{ scale: 0.99 }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <PiggyBank size={18} style={{ color: 'var(--primary)' }} />
+            <span style={{ fontSize: '0.8125rem', fontWeight: 600 }}>Savings Balance</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontWeight: 700, color: 'var(--primary)' }}>
+              <AnimatedMoney value={customer.savingsBalance} />
+            </span>
+            <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
+          </div>
+        </motion.div>
+      )}
 
       {/* Transactions */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+      <motion.div
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}
+        variants={itemVariants}
+      >
         <h3>Transactions</h3>
-        <button className="btn btn-primary btn-sm" onClick={() => { setShowAddTxn(true); setForm(defaultForm()); }}>
+        <motion.button
+          className="btn btn-primary btn-sm"
+          onClick={() => { setShowAddTxn(true); setForm(defaultForm()); }}
+          whileTap={{ scale: 0.95 }}
+        >
           <Plus size={14} /> Add
-        </button>
-      </div>
+        </motion.button>
+      </motion.div>
 
       {/* Filter */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: '1rem', flexWrap: 'wrap' }}>
+      <motion.div
+        style={{ display: 'flex', gap: 8, marginBottom: '1rem', flexWrap: 'wrap' }}
+        variants={itemVariants}
+      >
         {(['ALL', 'bank_account', 'credit_card', 'person'] as TxnFilter[]).map(f => (
-          <button
+          <motion.button
             key={f}
             className={`btn btn-sm ${filter === f ? 'btn-primary' : 'btn-outline'}`}
             onClick={() => setFilter(f)}
+            whileTap={{ scale: 0.95 }}
           >
             {f === 'ALL' ? 'All' : ACCOUNT_KIND_LABELS[f as AccountKind]}
-          </button>
+          </motion.button>
         ))}
-      </div>
+      </motion.div>
 
       {visibleTxns.length === 0 ? (
-        <div className="empty-state">
+        <motion.div className="empty-state" variants={itemVariants}>
           <div className="empty-state-icon">📋</div>
           <h3>No transactions</h3>
           <p>Add a transaction to start tracking this customer's ledger.</p>
-        </div>
+        </motion.div>
       ) : (
-        <div className="flow-card">
+        <motion.div
+          className="flow-card"
+          variants={itemVariants}
+          whileHover={{ y: -1 }}
+        >
           {txnListItems.map(item => {
             if (item.kind === 'split') {
               return (
@@ -1013,7 +1121,7 @@ export default function CustomerDetail() {
               />
             );
           })}
-        </div>
+        </motion.div>
       )}
 
       {/* Add/Edit Transaction Modal */}
@@ -1211,7 +1319,12 @@ export default function CustomerDetail() {
 
                     {form.mode === 'split' && (
                       <div>
-                        <label className="form-label" style={{ marginBottom: 8, display: 'block' }}>Split Entries</label>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <label className="form-label" style={{ margin: 0 }}>Split Entries</label>
+                          <span style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--primary)' }}>
+                            Total: {formatMoney(form.splits.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0))}
+                          </span>
+                        </div>
                         {form.splits.map((split, i) => (
                           <div key={i} style={{ background: 'var(--bg-soft)', borderRadius: 14, padding: '0.75rem', marginBottom: 8 }}>
                             <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
@@ -1675,6 +1788,6 @@ export default function CustomerDetail() {
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

@@ -3,7 +3,8 @@ package com.radafiq.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.radafiq.data.auth.GoogleSignInHelper
+import com.radafiq.data.auth.CredentialManagerHelper
+import com.radafiq.data.auth.LocalIdentityRepository
 import com.radafiq.data.backup.BackupJsonSerializer
 import com.radafiq.data.backup.DriveBackupRepository
 import com.radafiq.data.models.AccountKind
@@ -24,9 +25,11 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -50,6 +53,111 @@ data class DraftTransactionState(
     val isEmpty: Boolean get() = customerId.isBlank() && transactionName.isBlank() && amountExpression.isBlank() && transactionDate.isBlank()
 }
 
+// ── Pre-computed aggregate data classes for 120Hz fluid UI ────────────────────
+data class CardTotals(
+    val used: Double = 0.0,
+    val paid: Double = 0.0,
+    val balance: Double = 0.0
+)
+
+data class PersonSummary(
+    val personId: String,
+    val personName: String,
+    val totalUsed: Double,
+    val totalDue: Double
+)
+
+data class CustomerAggregates(
+    val emiOutstandingByAccount: Map<String, Double> = emptyMap(),
+    val nonEmiDueByAccount: Map<String, Double> = emptyMap(),
+    val personSummaries: List<PersonSummary> = emptyList()
+)
+
+data class DashboardAggregates(
+    val snapshotVersion: Long = 0L,
+    val usedAccountIds: Set<String> = emptySet(),
+    val visibleCards: List<CardSummary> = emptyList(),
+    val cardTotals: CardTotals = CardTotals(),
+    val customerAgg: CustomerAggregates = CustomerAggregates(),
+    val availableKinds: List<AccountKind> = emptyList(),
+    val savingsCustomers: List<CustomerSummary> = emptyList()
+)
+
+/**
+ * Computes all dashboard aggregates from raw cards + customers data.
+ * Designed to run on [Dispatchers.Default] — never call from the main thread.
+ */
+internal fun computeAggregates(
+    snapshotVersion: Long,
+    cards: List<CardSummary>,
+    customers: List<CustomerSummary>
+): DashboardAggregates {
+    val usedAccountIds = mutableSetOf<String>()
+    customers.forEach { c -> c.transactions.forEach { usedAccountIds.add(it.accountId) } }
+
+    val visibleCards = if (usedAccountIds.isEmpty()) emptyList()
+        else cards.filter { it.id in usedAccountIds && it.payable > 0.0 }
+
+    var totalUsed = 0.0; var totalPaid = 0.0; var totalBalance = 0.0
+    for (c in customers) { totalUsed += c.totalAmount; totalPaid += c.creditDueAmount; totalBalance += c.balance }
+    val cardTotals = CardTotals(totalUsed, totalPaid, totalBalance)
+
+    // ── Customer aggregator (EMI / non-EMI / person) ──
+    val emiMap = mutableMapOf<String, Double>()
+    val nonEmiMap = mutableMapOf<String, Double>()
+    val personMap = linkedMapOf<String, Triple<String, Double, Double>>()
+    customers.forEach { customer ->
+        customer.transactions.forEach { t ->
+            if (t.accountKind == AccountKind.PERSON) {
+                if (t.isVisibleInTransactions()) {
+                    val key = t.accountId
+                    val name = t.personName.ifBlank { t.accountName }
+                    val used = t.amount
+                    val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
+                    val existing = personMap[key]
+                    personMap[key] = if (existing == null) Triple(name, used, due)
+                        else Triple(existing.first, existing.second + used, existing.third + due)
+                }
+            } else if (!t.isEmi) {
+                if (t.isVisibleInTransactions()) {
+                    val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
+                    if (due > 0.0) nonEmiMap[t.accountId] = (nonEmiMap[t.accountId] ?: 0.0) + due
+                }
+            } else {
+                val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
+                if (due > 0.0) emiMap[t.accountId] = (emiMap[t.accountId] ?: 0.0) + due
+            }
+        }
+    }
+    val customerAgg = CustomerAggregates(
+        emiOutstandingByAccount = emiMap,
+        nonEmiDueByAccount = nonEmiMap,
+        personSummaries = personMap.entries
+            .map { (id, v) -> PersonSummary(id, v.first, v.second, v.third) }
+            .filter { it.totalDue > 0.0 }
+            .sortedByDescending { it.totalDue }
+    )
+
+    val availableKinds = buildList {
+        visibleCards.mapTo(this) { it.accountKind }
+        if (customerAgg.personSummaries.isNotEmpty() && !contains(AccountKind.PERSON)) add(AccountKind.PERSON)
+        distinct()
+    }
+
+    val savingsCustomers = customers.filter { it.savingsBalance > 0.0 }
+        .sortedByDescending { it.savingsBalance }
+
+    return DashboardAggregates(
+        snapshotVersion = snapshotVersion,
+        usedAccountIds = usedAccountIds,
+        visibleCards = visibleCards,
+        cardTotals = cardTotals,
+        customerAgg = customerAgg,
+        availableKinds = availableKinds,
+        savingsCustomers = savingsCustomers
+    )
+}
+
 class MainViewModel(
     private var repository: FirebaseRepository = FirebaseRepository()
 ) : ViewModel() {
@@ -71,6 +179,40 @@ class MainViewModel(
 
     private val _settlementHistoryLoading = MutableStateFlow(false)
     val settlementHistoryLoading: StateFlow<Boolean> = _settlementHistoryLoading.asStateFlow()
+
+    // ── Pre-computed dashboard aggregates (computed off main thread) ─────────────────
+    private val _aggregates = MutableStateFlow(DashboardAggregates())
+    val aggregates: StateFlow<DashboardAggregates> = _aggregates.asStateFlow()
+
+    // ── Frequently-used account IDs across ALL customers (for transaction editor) ──
+    private val _frequentAccountIds = MutableStateFlow<Set<String>>(emptySet())
+    val frequentAccountIds: StateFlow<Set<String>> = _frequentAccountIds.asStateFlow()
+
+    private var _snapshotVersion = 0L // simple counter, incremented on each data change
+
+    private var _computeAggregatesJob: Job? = null
+
+    /** Starts the background aggregation flow. Call after any data reset. */
+    private fun startAggregationFlow() {
+        _computeAggregatesJob?.cancel()
+        _computeAggregatesJob = viewModelScope.launch(Dispatchers.Default) {
+            combine(_cards, _customers) { cards, customers ->
+                _snapshotVersion++
+                val aggregates = computeAggregates(_snapshotVersion, cards, customers)
+                // Also compute frequent account IDs while we're here
+                val freq = mutableSetOf<String>()
+                for (c in customers) {
+                    for (t in c.transactions) {
+                        freq.add(t.accountId)
+                    }
+                }
+                _frequentAccountIds.value = freq
+                aggregates
+            }.collect { result ->
+                _aggregates.value = result
+            }
+        }
+    }
 
     fun loadSettlementHistory(transactionId: String) {
         viewModelScope.launch {
@@ -214,6 +356,10 @@ class MainViewModel(
         profileRepository = profileRepo
         settingsRepository = settingsRepo
         securityRepository = securityRepo
+        // Pre-warm encrypted security prefs on IO dispatcher
+        viewModelScope.launch(Dispatchers.IO) {
+            securityRepo.warmUp()
+        }
     }
 
     init {
@@ -221,7 +367,14 @@ class MainViewModel(
         appContext = runCatching {
             com.google.firebase.FirebaseApp.getInstance().applicationContext
         }.getOrNull()
+        // Pre-warm encrypted prefs on IO — starts in parallel with startListening
+        appContext?.let { ctx ->
+            viewModelScope.launch(Dispatchers.IO) {
+                LocalIdentityRepository.warmUp(ctx)
+            }
+        }
         startListening()
+        startAggregationFlow()
     }
 
     private fun startListening() {
@@ -234,6 +387,7 @@ class MainViewModel(
      */
     fun reinitialize() {
         autoBackupJob?.cancel()
+        _computeAggregatesJob?.cancel()
         // BUG-26: Remove old listeners before clearing to prevent memory leak
         firestoreListeners.forEach { it.remove() }
         firestoreListeners = emptyList()
@@ -247,8 +401,11 @@ class MainViewModel(
         _deletedCustomers.value = emptyList()
         _driveOperationMessage.value = null
         _draftTransaction.value = DraftTransactionState()
+        _aggregates.value = DashboardAggregates()
+        _snapshotVersion = 0L
         repository = FirebaseRepository()
         startListening()
+        startAggregationFlow()
     }
 
     /** Call before a restore so the echoed Firestore snapshots don't trigger auto-backup. */
@@ -307,7 +464,7 @@ class MainViewModel(
     private suspend fun performAutoBackup(context: Context) {
         // BUG-32, BUG-26: Thread-safe check for concurrent operations
         if (activeDriveOperationCount.get() > 0) return
-        val account = GoogleSignInHelper.getLastSignedInAccount(context) ?: return
+        val token = CredentialManagerHelper.fetchDriveToken(context) ?: return
         // Show syncing state in the customers tab
         _syncStatus.value = SyncStatus(SyncState.SYNCING, "Syncing...")
         syncStatusResetJob?.cancel()
@@ -315,9 +472,6 @@ class MainViewModel(
             // 30-second hard timeout — prevents the backup job from hanging indefinitely
             // when offline or on a weak connection, which was blocking snapshot delivery.
             kotlinx.coroutines.withTimeout(30_000L) {
-                val token = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    GoogleSignInHelper.fetchAccessToken(context, account)
-                }
                 val payload = repository.exportBackup(
                     profile = profileRepository?.exportProfileMap() ?: emptyMap(),
                     settings = mapOf(
@@ -392,16 +546,12 @@ class MainViewModel(
         viewModelScope.launch {
             _syncStatus.value = SyncStatus(SyncState.SYNCING, "Syncing...")
             syncStatusResetJob?.cancel()
-            val account = GoogleSignInHelper.getLastSignedInAccount(context)
-            if (account == null) {
+            val token = CredentialManagerHelper.fetchDriveToken(context)
+            if (token == null) {
                 setSyncResult(SyncState.ERROR, "Not signed in to Google.")
                 return@launch
             }
             try {
-                // Fetch token on IO (network call)
-                val token = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    GoogleSignInHelper.fetchAccessToken(context, account)
-                }
                 // Export from Firestore (uses await() internally — fine on any dispatcher)
                 val payload = repository.exportBackup(
                     profile = profileRepository?.exportProfileMap() ?: emptyMap(),
@@ -918,7 +1068,7 @@ class MainViewModel(
             val sortedEntries = newEntries.sortedByDescending { it.date }
             val newBalance = sortedEntries.sumOf {
                 if (it.type == com.radafiq.data.models.SavingsType.DEPOSIT) it.amount else -it.amount
-            }.coerceAtLeast(0.0)
+            }
             customer.copy(
                 savingsEntries = sortedEntries,
                 savingsBalance = newBalance,
@@ -933,7 +1083,7 @@ class MainViewModel(
             if (newEntries.size == customer.savingsEntries.size) return@map customer
             val newBalance = newEntries.sumOf {
                 if (it.type == com.radafiq.data.models.SavingsType.DEPOSIT) it.amount else -it.amount
-            }.coerceAtLeast(0.0)
+            }
             customer.copy(
                 savingsEntries = newEntries.sortedByDescending { it.date },
                 savingsBalance = newBalance,
@@ -942,7 +1092,7 @@ class MainViewModel(
         }
     }
 
-    fun addSavingsDeposit(customerId: String, customerName: String, amount: String, note: String, bankAccountId: String = "", bankAccountName: String = "") {
+    fun addSavingsDeposit(customerId: String, customerName: String, amount: String, note: String, bankAccountId: String = "", bankAccountName: String = "", date: String = LocalDate.now().toString()) {
         val parsed = amount.toDoubleOrNull() ?: return
         if (parsed <= 0.0) return
         val tempEntry = com.radafiq.data.models.SavingsEntry(
@@ -952,7 +1102,7 @@ class MainViewModel(
             amount = parsed,
             type = com.radafiq.data.models.SavingsType.DEPOSIT,
             note = note.trim(),
-            date = LocalDate.now().toString(),
+            date = date,
             bankAccountId = bankAccountId,
             bankAccountName = bankAccountName
         )
@@ -964,14 +1114,14 @@ class MainViewModel(
                 amount = parsed,
                 type = com.radafiq.data.models.SavingsType.DEPOSIT,
                 note = note.trim(),
-                date = LocalDate.now().toString(),
+                date = date,
                 bankAccountId = bankAccountId,
                 bankAccountName = bankAccountName
             )
         }
     }
 
-    fun addSavingsWithdrawal(customerId: String, customerName: String, amount: String, note: String) {
+    fun addSavingsWithdrawal(customerId: String, customerName: String, amount: String, note: String, bankAccountId: String = "", bankAccountName: String = "", date: String = LocalDate.now().toString()) {
         val parsed = amount.toDoubleOrNull() ?: return
         if (parsed <= 0.0) return
         val tempEntry = com.radafiq.data.models.SavingsEntry(
@@ -981,7 +1131,9 @@ class MainViewModel(
             amount = parsed,
             type = com.radafiq.data.models.SavingsType.WITHDRAWAL,
             note = note.trim(),
-            date = LocalDate.now().toString()
+            date = date,
+            bankAccountId = bankAccountId,
+            bankAccountName = bankAccountName
         )
         optimisticallyAddSavingsEntry(tempEntry)
         viewModelScope.launch {
@@ -991,7 +1143,9 @@ class MainViewModel(
                 amount = parsed,
                 type = com.radafiq.data.models.SavingsType.WITHDRAWAL,
                 note = note.trim(),
-                date = LocalDate.now().toString()
+                date = date,
+                bankAccountId = bankAccountId,
+                bankAccountName = bankAccountName
             )
         }
     }
@@ -1007,6 +1161,7 @@ class MainViewModel(
         super.onCleared()
         autoBackupJob?.cancel()
         syncStatusResetJob?.cancel()
+        _computeAggregatesJob?.cancel()
         firestoreListeners.forEach { it.remove() }
     }
 }
