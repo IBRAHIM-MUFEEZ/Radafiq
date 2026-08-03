@@ -25,11 +25,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +50,7 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Savings
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -64,6 +68,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -102,8 +110,11 @@ import com.radafiq.data.models.CustomerTransaction
 import com.radafiq.data.models.IndianAccountCatalog
 import com.radafiq.data.models.SettlementHistoryEntry
 import com.radafiq.data.models.SplitEntry
+import com.radafiq.data.models.TransferHistoryEntry
 import com.radafiq.viewmodel.DraftTransactionState
 import com.radafiq.viewmodel.MainViewModel
+import com.radafiq.viewmodel.TransferEvent
+import com.radafiq.viewmodel.groupKey
 import java.time.LocalDate
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -428,6 +439,7 @@ private fun AlphabetIndexStrip(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun CustomerCard(
     customer: CustomerSummary,
     vm: MainViewModel,
@@ -443,6 +455,8 @@ fun CustomerCard(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     // Settled transactions are hidden by default; toggle below reveals them
     var showSettled by remember { mutableStateOf(false) }
+    // End date filter — when set, only transactions with transactionDate <= endDateFilter are shown
+    var endDateFilter by remember { mutableStateOf<String?>(null) }
 
     // Auto-reopen dialog if a draft exists for this customer (e.g. after biometric lock)
     val draft by vm.draftTransaction.collectAsState()
@@ -452,7 +466,8 @@ fun CustomerCard(
         }
     }
 
-    val filteredTransactions = remember(customer.snapshotVersion, transactionFilter, showSettled) {
+    val filteredTransactions = remember(customer.snapshotVersion, transactionFilter, showSettled, endDateFilter) {
+        val edf = endDateFilter
         val predicate: ((CustomerTransaction) -> Boolean)? = when (transactionFilter) {
             TransactionTypeFilter.ALL -> null
             TransactionTypeFilter.BANK_ACCOUNT -> { t -> t.accountKind == AccountKind.BANK_ACCOUNT }
@@ -464,14 +479,16 @@ fun CustomerCard(
         // Pre-sorting by individual amount before grouping produces incorrect group order for splits.
         customer.transactions
             .filter { t -> t.isVisibleInTransactions(today) }
+            .filter { t -> edf == null || t.transactionDate <= edf }
             .filter { t -> showSettled || !t.isSettled }
             .let { if (predicate == null) it else it.filter(predicate) }
     }
 
     // Count settled transactions currently hidden (for the toggle chip)
-    val settledHiddenCount = remember(customer.snapshotVersion, transactionFilter, showSettled) {
+    val settledHiddenCount = remember(customer.snapshotVersion, transactionFilter, showSettled, endDateFilter) {
         if (showSettled) 0
         else {
+            val edf = endDateFilter
             val predicate: ((CustomerTransaction) -> Boolean)? = when (transactionFilter) {
                 TransactionTypeFilter.ALL -> null
                 TransactionTypeFilter.BANK_ACCOUNT -> { t -> t.accountKind == AccountKind.BANK_ACCOUNT }
@@ -481,6 +498,7 @@ fun CustomerCard(
             val today = java.time.LocalDate.now()
             customer.transactions
                 .filter { t -> t.isVisibleInTransactions(today) && t.isSettled }
+                .filter { t -> edf == null || t.transactionDate <= edf }
                 .let { if (predicate == null) it else it.filter(predicate) }
                 .size
         }
@@ -638,33 +656,127 @@ fun CustomerCard(
                         .padding(top = 10.dp, bottom = 8.dp)
                 )
 
-                // Settled toggle chip — shown when there are hidden settled transactions
-                if (settledHiddenCount > 0 || showSettled) {
+                // Filter chips row: settled toggle + end date
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Settled toggle chip — shown when there are hidden settled transactions
+                    if (settledHiddenCount > 0 || showSettled) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(
+                                    if (showSettled) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (showSettled) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                    RoundedCornerShape(999.dp)
+                                )
+                                .clickable { showSettled = !showSettled }
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = if (showSettled) "Hide Settled" else "${settledHiddenCount} Settled",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (showSettled) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    // End Date filter chip
+                    val endDatePickerOpen = remember { mutableStateOf(false) }
+                    val currentEndDate = endDateFilter
                     Row(
                         modifier = Modifier
-                            .padding(bottom = 8.dp)
                             .clip(RoundedCornerShape(999.dp))
                             .background(
-                                if (showSettled) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                if (currentEndDate != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                             )
                             .border(
                                 1.dp,
-                                if (showSettled) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                if (currentEndDate != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
                                 else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
                                 RoundedCornerShape(999.dp)
                             )
-                            .clickable { showSettled = !showSettled }
+                            .clickable { endDatePickerOpen.value = true }
                             .padding(horizontal = 14.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
+                        Icon(
+                            imageVector = Icons.Filled.DateRange,
+                            contentDescription = "End Date",
+                            tint = if (currentEndDate != null) MaterialTheme.colorScheme.primary
+                                   else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
                         Text(
-                            text = if (showSettled) "Hide Settled" else "${settledHiddenCount} Settled",
+                            text = if (currentEndDate != null) formatDisplayDate(currentEndDate) else "End Date",
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (showSettled) MaterialTheme.colorScheme.primary
+                            color = if (currentEndDate != null) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (currentEndDate != null) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = "Clear end date",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .clickable { endDateFilter = null }
+                            )
+                        }
+                    }
+                    if (endDatePickerOpen.value) {
+                        val todayEpochMillis = java.time.LocalDate.now()
+                            .atStartOfDay(java.time.ZoneOffset.UTC)
+                            .toInstant().toEpochMilli()
+                        val datePickerState = androidx.compose.material3.rememberDatePickerState(
+                            initialSelectedDateMillis = endDateFilter?.let { iso ->
+                                runCatching {
+                                    java.time.LocalDate.parse(iso)
+                                        .atStartOfDay(java.time.ZoneOffset.UTC)
+                                        .toInstant().toEpochMilli()
+                                }.getOrNull()
+                            } ?: System.currentTimeMillis(),
+                            selectableDates = object : androidx.compose.material3.SelectableDates {
+                                override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                                    return utcTimeMillis <= todayEpochMillis
+                                }
+                            }
+                        )
+                        androidx.compose.material3.DatePickerDialog(
+                            onDismissRequest = { endDatePickerOpen.value = false },
+                            confirmButton = {
+                                androidx.compose.material3.TextButton(onClick = {
+                                    val millis = datePickerState.selectedDateMillis
+                                    if (millis != null) {
+                                        val iso = java.time.Instant.ofEpochMilli(millis)
+                                            .atZone(java.time.ZoneOffset.UTC)
+                                            .toLocalDate().toString()
+                                        endDateFilter = iso
+                                    }
+                                    endDatePickerOpen.value = false
+                                }) { Text("OK") }
+                            },
+                            dismissButton = {
+                                androidx.compose.material3.TextButton(onClick = {
+                                    endDatePickerOpen.value = false
+                                }) { Text("Cancel") }
+                            }
+                        ) {
+                            androidx.compose.material3.DatePicker(state = datePickerState)
+                        }
                     }
                 }
 
@@ -672,7 +784,7 @@ fun CustomerCard(
 
                 // BUG-09: Use remember to avoid recomputing grouped transactions on every recomposition
                 // filteredTransactions is already visibility-filtered, type-filtered, and settled-filtered
-                val grouped = remember(customer.snapshotVersion, transactionFilter, showSettled) {
+                val grouped = remember(customer.snapshotVersion, transactionFilter, showSettled, endDateFilter) {
                     buildGroupedTransactions(filteredTransactions)
                 }
 
@@ -996,14 +1108,15 @@ fun CustomerListRow(
 }
 
 // ── Full-screen customer detail ───────────────────────────────────────────────
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CustomerDetailScreen(
     customerId: String,
     selectedAccountIds: Set<String>,
     vm: MainViewModel = viewModel(),
     onBack: () -> Unit,
-    onOpenSavings: (String) -> Unit = {}
+    onOpenSavings: (String) -> Unit = {},
+    snackbarHostState: SnackbarHostState = SnackbarHostState()
 ) {
     val customers by vm.customers.collectAsState()
     val customer = customers.find { it.id == customerId }
@@ -1026,6 +1139,13 @@ fun CustomerDetailScreen(
     var showAllHistory by remember { mutableStateOf(false) }
     // Settled transactions are hidden by default; user can reveal them with the toggle chip
     var showSettled by remember { mutableStateOf(false) }
+    // End date filter — when set, only transactions with transactionDate <= endDateFilter are shown
+    var endDateFilter by remember { mutableStateOf<String?>(null) }
+    var showingTransferTransaction by remember { mutableStateOf<CustomerTransaction?>(null) }
+    var showingBulkTransfer by remember { mutableStateOf<List<CustomerTransaction>?>(null) }
+    var showingTransferHistoryForTxn by remember { mutableStateOf<String?>(null) }
+    var selectMode by remember { mutableStateOf(false) }
+    var selectedTransactionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val coroutineScope = rememberCoroutineScope()
 
     // Auto-reopen dialog if a draft exists for this customer (e.g. after biometric lock)
@@ -1036,7 +1156,8 @@ fun CustomerDetailScreen(
         }
     }
 
-    val filteredTransactions = remember(customer.snapshotVersion, transactionFilter, showSettled) {
+    val filteredTransactions = remember(customer.snapshotVersion, transactionFilter, showSettled, endDateFilter) {
+        val edf = endDateFilter
         val predicate: ((CustomerTransaction) -> Boolean)? = when (transactionFilter) {
             TransactionTypeFilter.ALL -> null
             TransactionTypeFilter.BANK_ACCOUNT -> { t -> t.accountKind == AccountKind.BANK_ACCOUNT }
@@ -1048,6 +1169,7 @@ fun CustomerDetailScreen(
         // Pre-sorting by individual amount before grouping produces incorrect group order for splits.
         val visible = customer.transactions
             .filter { t -> t.isVisibleInTransactions(today) }
+            .filter { t -> edf == null || t.transactionDate <= edf }
             // Hide fully-settled transactions from the list by default; the user can
             // reveal them with the "Show settled" toggle chip below the filter row.
             .filter { t -> showSettled || !t.isSettled }
@@ -1055,10 +1177,28 @@ fun CustomerDetailScreen(
         buildGroupedTransactions(visible)
     }
 
+    // Selected transactions for bulk transfer — includes split group and EMI group siblings.
+    // Uses customer.transactions as the source so all siblings (even hidden by endDate/settled)
+    // are included in the transfer as expected.
+    val selectedTransactions: List<CustomerTransaction> by remember(customer.snapshotVersion, selectedTransactionIds, customer.transactions) {
+        val ids = selectedTransactionIds
+        val txnList = customer.transactions
+        val selectedSplitGroups = txnList.filter { it.id in ids && it.splitGroupId.isNotBlank() }
+            .map { it.splitGroupId }.toSet()
+        val selectedEmiGroups = txnList.filter { it.id in ids && it.emiGroupId.isNotBlank() }
+            .map { it.emiGroupId }.toSet()
+        mutableStateOf(txnList.filter { t ->
+            t.id in ids ||
+                (t.splitGroupId.isNotBlank() && t.splitGroupId in selectedSplitGroups) ||
+                (t.emiGroupId.isNotBlank() && t.emiGroupId in selectedEmiGroups)
+        })
+    }
+
     // Count of settled transactions that are currently hidden (for the toggle chip label)
-    val settledHiddenCount = remember(customer.snapshotVersion, transactionFilter, showSettled) {
+    val settledHiddenCount = remember(customer.snapshotVersion, transactionFilter, showSettled, endDateFilter) {
         if (showSettled) 0
         else {
+            val edf = endDateFilter
             val predicate: ((CustomerTransaction) -> Boolean)? = when (transactionFilter) {
                 TransactionTypeFilter.ALL -> null
                 TransactionTypeFilter.BANK_ACCOUNT -> { t -> t.accountKind == AccountKind.BANK_ACCOUNT }
@@ -1068,13 +1208,14 @@ fun CustomerDetailScreen(
             val today = LocalDate.now()
             customer.transactions
                 .filter { t -> t.isVisibleInTransactions(today) && t.isSettled }
+                .filter { t -> edf == null || t.transactionDate <= edf }
                 .let { if (predicate == null) it else it.filter(predicate) }
                 .size
         }
     }
     val groupedTransactions = filteredTransactions
 
-    val customerDetailDisplayData = remember(customer.snapshotVersion, transactionFilter, showSettled) {
+    val customerDetailDisplayData = remember(customer.snapshotVersion, transactionFilter, showSettled, endDateFilter) {
         val fd = filteredTransactions.sumOf { group ->
             group.splits.sumOf { split ->
                 if (split.isSettled) 0.0
@@ -1107,10 +1248,13 @@ fun CustomerDetailScreen(
         val totalUsed: Double,
         val totalDue: Double
     )
-    val accountBreakdowns = remember(customer.snapshotVersion, showSettled) {
+    val accountBreakdowns = remember(customer.snapshotVersion, showSettled, endDateFilter) {
+        val edf = endDateFilter
         val today = LocalDate.now()
         val visible = customer.transactions.filter { t ->
-            t.isVisibleInTransactions(today) && (showSettled || !t.isSettled)
+            t.isVisibleInTransactions(today) &&
+                (edf == null || t.transactionDate <= edf) &&
+                (showSettled || !t.isSettled)
         }
         val map = linkedMapOf<String, AccountBreakdown>()
         visible.forEach { t ->
@@ -1249,15 +1393,16 @@ fun CustomerDetailScreen(
                 )
             }
         ) { padding ->
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .radafiqScrollBackground()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp),
-                contentPadding = PaddingValues(top = 8.dp, bottom = 120.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .radafiqScrollBackground()
+                        .padding(padding)
+                        .padding(horizontal = 16.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = if (selectMode) 180.dp else 120.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                 // Summary strip — keyed on snapshotVersion so LazyColumn recomposes
                 // this item immediately when data changes (lazy items won't update otherwise)
                 item(key = "summary_${customer.snapshotVersion}") {
@@ -1487,7 +1632,9 @@ fun CustomerDetailScreen(
                 // Filter chips
                 item {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1495,6 +1642,93 @@ fun CustomerDetailScreen(
                             selectedFilter = transactionFilter,
                             onFilterSelected = { transactionFilter = it }
                         )
+                        // End Date filter chip
+                        val endDatePickerOpen = remember { mutableStateOf(false) }
+                        val currentEndDate = endDateFilter
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(
+                                    if (currentEndDate != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (currentEndDate != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                    RoundedCornerShape(999.dp)
+                                )
+                                .clickable { endDatePickerOpen.value = true }
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.DateRange,
+                                contentDescription = "End Date",
+                                tint = if (currentEndDate != null) MaterialTheme.colorScheme.primary
+                                       else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = if (currentEndDate != null) formatDisplayDate(currentEndDate)
+                                       else "End Date",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (currentEndDate != null) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (currentEndDate != null) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Clear end date",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .size(14.dp)
+                                        .clickable { endDateFilter = null }
+                                )
+                            }
+                        }
+                        if (endDatePickerOpen.value) {
+                            val todayEpochMillis = java.time.LocalDate.now()
+                                .atStartOfDay(java.time.ZoneOffset.UTC)
+                                .toInstant().toEpochMilli()
+                            val datePickerState = androidx.compose.material3.rememberDatePickerState(
+                                initialSelectedDateMillis = endDateFilter?.let { iso ->
+                                    runCatching {
+                                        java.time.LocalDate.parse(iso)
+                                            .atStartOfDay(java.time.ZoneOffset.UTC)
+                                            .toInstant().toEpochMilli()
+                                    }.getOrNull()
+                                } ?: System.currentTimeMillis(),
+                                selectableDates = object : androidx.compose.material3.SelectableDates {
+                                    override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                                        return utcTimeMillis <= todayEpochMillis
+                                    }
+                                }
+                            )
+                            androidx.compose.material3.DatePickerDialog(
+                                onDismissRequest = { endDatePickerOpen.value = false },
+                                confirmButton = {
+                                    androidx.compose.material3.TextButton(onClick = {
+                                        val millis = datePickerState.selectedDateMillis
+                                        if (millis != null) {
+                                            val iso = java.time.Instant.ofEpochMilli(millis)
+                                                .atZone(java.time.ZoneOffset.UTC)
+                                                .toLocalDate().toString()
+                                            endDateFilter = iso
+                                        }
+                                        endDatePickerOpen.value = false
+                                    }) { Text("OK") }
+                                },
+                                dismissButton = {
+                                    androidx.compose.material3.TextButton(onClick = {
+                                        endDatePickerOpen.value = false
+                                    }) { Text("Cancel") }
+                                }
+                            ) {
+                                androidx.compose.material3.DatePicker(state = datePickerState)
+                            }
+                        }
                         // Settled visibility toggle chip
                         val chipLabel = if (showSettled) "Hide Settled"
                                         else if (settledHiddenCount > 0) "$settledHiddenCount Settled"
@@ -1526,6 +1760,35 @@ fun CustomerDetailScreen(
                                 )
                             }
                         }
+                        // Select mode toggle
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(
+                                    if (selectMode) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (selectMode) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                    RoundedCornerShape(999.dp)
+                                )
+                                .clickable {
+                                    selectMode = !selectMode
+                                    if (!selectMode) selectedTransactionIds = emptySet()
+                                }
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = if (selectMode) "Done" else "Select",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selectMode) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
 
@@ -1539,7 +1802,10 @@ fun CustomerDetailScreen(
                         ) {
                             EmptyState(
                                 title = "No transactions",
-                                subtitle = "Tap + to add the first transaction for ${customer.name}."
+                                subtitle = if (endDateFilter != null)
+                                    "No transactions found on or before ${formatDisplayDate(endDateFilter!!)}."
+                                else
+                                    "Tap + to add the first transaction for ${customer.name}."
                             )
                         }
                     }
@@ -1555,6 +1821,8 @@ fun CustomerDetailScreen(
                         val groupsForDate = byDate[date] ?: emptyList()
                         items(groupsForDate, key = { (group, _) -> group.key }) { (group, runningBal) ->
                             if (group.splits.size > 1) {
+                                val allSplitIds = group.splits.map { it.id }
+                                val allSel = selectMode && allSplitIds.all { it in selectedTransactionIds }
                                 SplitTransactionRow(
                                     group = group,
                                     runningBalance = runningBal,
@@ -1564,18 +1832,101 @@ fun CustomerDetailScreen(
                                     },
                                     onSettledChange = { txnId, settled -> vm.toggleTransactionSettled(txnId, settled) },
                                     onPartialPayment = { txnId, amount -> vm.addPartialPayment(txnId, amount) },
-                                    onEditSplit = { transactionToEdit = it }
+                                    onEditSplit = { transactionToEdit = it },
+                                    onTransfer = { showingTransferTransaction = group.splits.first() },
+                                    onViewTransferHistory = { showingTransferHistoryForTxn = group.splits.first().id },
+                                    selectMode = selectMode,
+                                    isSelected = allSel,
+                                    onToggleSelect = {
+                                        selectedTransactionIds = if (allSel) {
+                                            selectedTransactionIds - allSplitIds.toSet()
+                                        } else {
+                                            selectedTransactionIds + allSplitIds.toSet()
+                                        }
+                                    }
                                 )
                             } else {
                                 val transaction = group.splits.first()
+                                val txnId = transaction.id
                                 TransactionRow(
                                     transaction = transaction,
                                     runningBalance = runningBal,
                                     onEdit = { transactionToEdit = transaction },
                                     onDelete = { transactionToDelete = transaction },
                                     onSettledChange = { vm.toggleTransactionSettled(transaction.id, it) },
-                                    onPartialPayment = { amount -> vm.addPartialPayment(transaction.id, amount) }
+                                    onPartialPayment = { amount -> vm.addPartialPayment(transaction.id, amount) },
+                                    onTransfer = { showingTransferTransaction = transaction },
+                                    onViewTransferHistory = { showingTransferHistoryForTxn = txnId },
+                                    selectMode = selectMode,
+                                    isSelected = txnId in selectedTransactionIds,
+                                    onToggleSelect = {
+                                        selectedTransactionIds = if (txnId in selectedTransactionIds) {
+                                            selectedTransactionIds - txnId
+                                        } else {
+                                            selectedTransactionIds + txnId
+                                        }
+                                    }
                                 )
+                            }
+                        }
+                    }
+                }
+                }
+
+                // Bulk transfer bottom bar — shown when in select mode with items selected
+                if (selectMode && selectedTransactionIds.isNotEmpty()) {
+                    val selectedCount = selectedTransactions.distinctBy { it.groupKey() }.size
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(padding)
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f)
+                                )
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                                    RoundedCornerShape(16.dp)
+                                )
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "$selectedCount selected",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        selectMode = false
+                                        selectedTransactionIds = emptySet()
+                                    }
+                                ) {
+                                    Text("Clear")
+                                }
+                                Button(
+                                    onClick = {
+                                        val uniqueGroups = selectedTransactions.distinctBy { t ->
+                                            when {
+                                                t.splitGroupId.isNotBlank() -> "split:${t.splitGroupId}"
+                                                t.emiGroupId.isNotBlank() -> "emi:${t.emiGroupId}"
+                                                else -> "txn:${t.id}"
+                                            }
+                                        }
+                                        showingBulkTransfer = uniqueGroups
+                                    }
+                                ) {
+                                    Text("Transfer ($selectedCount)")
+                                }
                             }
                         }
                     }
@@ -1697,6 +2048,92 @@ fun CustomerDetailScreen(
         )
     }
 
+    // ── Single transfer dialog ──────────────────────────────────────────────
+    showingTransferTransaction?.let { transaction ->
+        CustomerPickerDialog(
+            transactions = listOf(transaction),
+            currentCustomerName = customer.name,
+            customers = customers.filter { it.id != customer.id },
+            onTransfer = { newCustomerId, newCustomerName ->
+                vm.transferTransaction(
+                    transaction = transaction,
+                    newCustomerId = newCustomerId,
+                    newCustomerName = newCustomerName
+                )
+                showingTransferTransaction = null
+            },
+            onDismiss = { showingTransferTransaction = null }
+        )
+    }
+
+    // ── Bulk transfer dialog ──────────────────────────────────────────────────
+    showingBulkTransfer?.let { transactions ->
+        // Deduplicate by group key: siblings in the same split/EMI group count as one logical transfer
+        val uniqueGroups = transactions.distinctBy { it.groupKey() }
+        CustomerPickerDialog(
+            transactions = uniqueGroups,
+            currentCustomerName = customer.name,
+            customers = customers.filter { it.id != customer.id },
+            onTransfer = { newCustomerId, newCustomerName ->
+                uniqueGroups.forEach { txn ->
+                    vm.transferTransaction(
+                        transaction = txn,
+                        newCustomerId = newCustomerId,
+                        newCustomerName = newCustomerName
+                    )
+                }
+                showingBulkTransfer = null
+                selectMode = false
+                selectedTransactionIds = emptySet()
+            },
+            onDismiss = { showingBulkTransfer = null }
+        )
+    }
+
+    // ── Transfer events — shows snackbar only after Firestore write commits ──────
+    LaunchedEffect(Unit) {
+        vm.transferEvents.collect { event ->
+            when (event) {
+                is TransferEvent.Success -> {
+                    val count = event.transactions.size
+                    val message = if (count > 1) "Transferred $count to ${event.toCustomerName}"
+                        else "Transferred to ${event.toCustomerName}"
+                    val result = snackbarHostState.showSnackbar(
+                        message = message,
+                        actionLabel = "Undo",
+                        duration = SnackbarDuration.Short
+                    )
+                    if (result == SnackbarResult.ActionPerformed) {
+                        // Deduplicate by group key — transferTransaction already discovers
+                        // and moves all siblings internally, so iterating every transaction
+                        // would create transient duplicates on the second+ siblings.
+                        val seenKeys = mutableSetOf<String>()
+                        event.transactions.forEach { txn ->
+                            val key = when {
+                                txn.splitGroupId.isNotBlank() -> "s:${txn.splitGroupId}"
+                                txn.emiGroupId.isNotBlank() -> "e:${txn.emiGroupId}"
+                                else -> "t:${txn.id}"
+                            }
+                            if (seenKeys.add(key)) {
+                                vm.transferTransaction(
+                                    transaction = txn.copy(customerId = event.toCustomerId),
+                                    newCustomerId = event.fromCustomerId,
+                                    newCustomerName = event.fromCustomerName
+                                )
+                            }
+                        }
+                    }
+                }
+                is TransferEvent.Failure -> {
+                    snackbarHostState.showSnackbar(
+                        message = "Transfer failed: ${event.error}",
+                        duration = SnackbarDuration.Short
+                    )
+                }
+            }
+        }
+    }
+
     if (showShareDialog) {
         ShareStatementDialog(
             customer = customer,
@@ -1799,6 +2236,98 @@ fun CustomerDetailScreen(
             onDismiss = { showAllHistory = false }
         )
     }
+
+    // ── Transfer History dialog ─────────────────────────────────────────────
+    // Collect StateFlows only when the dialog is visible to avoid full-screen recomposition.
+    showingTransferHistoryForTxn?.let { txnId ->
+        val transferHistoryList by vm.transferHistory.collectAsState()
+        val transferHistoryLoading by vm.transferHistoryLoading.collectAsState()
+        TransferHistoryDialog(
+            history = transferHistoryList,
+            loading = transferHistoryLoading,
+            onDismiss = { showingTransferHistoryForTxn = null },
+            onLoad = { vm.loadTransferHistory(txnId) }
+        )
+    }
+}
+
+@Composable
+private fun TransferHistoryDialog(
+    history: List<TransferHistoryEntry>,
+    loading: Boolean,
+    onDismiss: () -> Unit,
+    onLoad: () -> Unit
+) {
+    LaunchedEffect(Unit) { onLoad() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Transfer History") },
+        text = {
+            if (loading) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(120.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Loading…", style = MaterialTheme.typography.bodyMedium)
+                }
+            } else if (history.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(120.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "No transfer history for this transaction.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 300.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(history) { entry ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = "Moved from ${entry.fromCustomerName} to ${entry.toCustomerName}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            if (entry.timestamp > 0L) {
+                                Text(
+                                    text = java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", java.util.Locale.getDefault())
+                                        .format(java.util.Date(entry.timestamp)),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                            if (entry.transactionIds.size > 1) {
+                                Text(
+                                    text = "${entry.transactionIds.size} transactions",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
 }
 
 private fun initialsFor(name: String): String {
@@ -1936,7 +2465,12 @@ fun TransactionRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onSettledChange: (Boolean) -> Unit,
-    onPartialPayment: (String) -> Unit = {}
+    onPartialPayment: (String) -> Unit = {},
+    onTransfer: () -> Unit = {},
+    onViewTransferHistory: () -> Unit = {},
+    selectMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelect: () -> Unit = {}
 ) {
     val lineThrough = if (transaction.isSettled) TextDecoration.LineThrough else TextDecoration.None
     val contentAlpha = if (transaction.isSettled) 0.56f else 1f
@@ -2024,29 +2558,58 @@ fun TransactionRow(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
-                    Checkbox(
-                        checked = transaction.isSettled,
-                        onCheckedChange = { newValue -> showSettleConfirm = newValue },
-                        modifier = Modifier.size(32.dp)
-                    )
-                    IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
-                        Icon(
-                            Icons.Filled.Edit,
-                            contentDescription = "Edit",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
+                    if (selectMode) {
+                        Checkbox(
+                            checked = isSelected,
+                            onCheckedChange = { onToggleSelect() },
+                            modifier = Modifier.size(32.dp)
                         )
-                    }
-                    IconButton(onClick = {
-                        android.util.Log.d("DeleteTxn", "Delete icon tapped: id='${transaction.id}' name='${transaction.name}'")
-                        onDelete()
-                    }, modifier = Modifier.size(32.dp)) {
-                        Icon(
-                            Icons.Filled.Delete,
-                            contentDescription = "Delete",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(16.dp)
+                    } else {
+                        Checkbox(
+                            checked = transaction.isSettled,
+                            onCheckedChange = { newValue -> showSettleConfirm = newValue },
+                            modifier = Modifier.size(32.dp)
                         )
+                        IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                            Icon(
+                                Icons.Filled.Edit,
+                                contentDescription = "Edit",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        IconButton(onClick = {
+                            android.util.Log.d("DeleteTxn", "Delete icon tapped: id='${transaction.id}' name='${transaction.name}'")
+                            onDelete()
+                        }, modifier = Modifier.size(32.dp)) {
+                            Icon(
+                                Icons.Filled.Delete,
+                                contentDescription = "Delete",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        IconButton(onClick = onTransfer, modifier = Modifier.size(32.dp)) {
+                            Box(modifier = Modifier.size(16.dp)) {
+                                Text(
+                                    "⇄",
+                                    fontSize = 15.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.Center)
+                                )
+                            }
+                        }
+                        IconButton(onClick = onViewTransferHistory, modifier = Modifier.size(32.dp)) {
+                            Box(modifier = Modifier.size(16.dp)) {
+                                Text(
+                                    "📋",
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.Center)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -3403,7 +3966,12 @@ private fun SplitTransactionRow(
     onSettledChangeAll: (Boolean) -> Unit,
     onSettledChange: (transactionId: String, settled: Boolean) -> Unit = { _, _ -> },
     onPartialPayment: (transactionId: String, amount: String) -> Unit = { _, _ -> },
-    onEditSplit: ((CustomerTransaction) -> Unit)? = null
+    onEditSplit: ((CustomerTransaction) -> Unit)? = null,
+    onTransfer: () -> Unit = {},
+    onViewTransferHistory: () -> Unit = {},
+    selectMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelect: () -> Unit = {}
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showDetailDialog by remember { mutableStateOf(false) }
@@ -3501,36 +4069,65 @@ private fun SplitTransactionRow(
                         )
                     }
                 }
-                Checkbox(
-                    checked = allSettled,
-                    onCheckedChange = { newValue -> showSettleConfirm = newValue },
-                    modifier = Modifier.padding(start = 4.dp)
-                )
-                IconButton(onClick = { expanded = !expanded }, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                        contentDescription = if (expanded) "Collapse" else "Expand",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
+                if (selectMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelect() },
+                        modifier = Modifier.padding(start = 4.dp)
                     )
-                }
-                if (onEditSplit != null) {
-                    IconButton(onClick = { showDetailDialog = true }, modifier = Modifier.size(32.dp)) {
+                } else {
+                    Checkbox(
+                        checked = allSettled,
+                        onCheckedChange = { newValue -> showSettleConfirm = newValue },
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                    IconButton(onClick = { expanded = !expanded }, modifier = Modifier.size(32.dp)) {
                         Icon(
-                            Icons.Filled.Edit,
-                            contentDescription = "Edit split",
-                            tint = MaterialTheme.colorScheme.primary,
+                            imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = if (expanded) "Collapse" else "Expand",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(18.dp)
                         )
                     }
-                }
-                IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        Icons.Filled.Delete,
-                        contentDescription = "Delete all splits",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(18.dp)
-                    )
+                    if (onEditSplit != null) {
+                        IconButton(onClick = { showDetailDialog = true }, modifier = Modifier.size(32.dp)) {
+                            Icon(
+                                Icons.Filled.Edit,
+                                contentDescription = "Edit split",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    IconButton(onClick = onTransfer, modifier = Modifier.size(32.dp)) {
+                        Box(modifier = Modifier.size(18.dp)) {
+                            Text(
+                                "⇄",
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.Center)
+                            )
+                        }
+                    }
+                    IconButton(onClick = onViewTransferHistory, modifier = Modifier.size(32.dp)) {
+                        Box(modifier = Modifier.size(18.dp)) {
+                            Text(
+                                "📋",
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.Center)
+                            )
+                        }
+                    }
+                    IconButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = "Delete all splits",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }
@@ -4969,4 +5566,198 @@ private fun PaidBreakdownDialog(
             }
         }
     )
+}
+
+// -- Customer Picker Dialog -----------------------------------------------------
+// Shows a searchable customer list and confirmation for transferring transaction(s).
+@Composable
+private fun CustomerPickerDialog(
+    transactions: List<CustomerTransaction>?,
+    currentCustomerName: String,
+    customers: List<CustomerSummary>,
+    onTransfer: (newCustomerId: String, newCustomerName: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var search by remember { mutableStateOf("") }
+    var selectedCustomer by remember { mutableStateOf<CustomerSummary?>(null) }
+    var showConfirm by remember { mutableStateOf(false) }
+    val isBulk = transactions != null && transactions.size > 1
+    val count = transactions?.size ?: 1
+    val firstTxn = transactions?.firstOrNull() ?: return
+    val isSplitGroup = firstTxn.splitGroupId.isNotBlank()
+    val isEmiPlan = firstTxn.emiGroupId.isNotBlank()
+
+    val filtered = remember(customers, search) {
+        if (search.isBlank()) customers
+        else customers.filter { it.name.contains(search, ignoreCase = true) }
+    }
+
+    // Step 1: Select customer
+    if (!showConfirm) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(if (isBulk) "Transfer $count Transactions" else "Transfer Transaction") },
+            text = {
+                Column {
+                    if (isBulk) {
+                        Text(
+                            "Move $count transactions from $currentCustomerName to:",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    } else {
+                        Text(
+                            "Move \"${firstTxn.name}\" (${formatMoney(firstTxn.amount)}) from $currentCustomerName to:",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    SplitOrEmiWarnings(
+                        isSplitGroup = isSplitGroup,
+                        isEmiPlan = isEmiPlan,
+                        isBulk = isBulk,
+                        withWarningIcons = true
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        placeholder = { Text("Search customers…") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyColumn(modifier = Modifier.heightIn(max = 250.dp)) {
+                        if (filtered.isEmpty()) {
+                            item {
+                                Text(
+                                    if (search.isNotBlank()) "No customers match your search"
+                                    else "No other customers found",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 12.dp)
+                                )
+                            }
+                        } else {
+                            items(filtered) { c ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 2.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (selectedCustomer?.id == c.id)
+                                                MaterialTheme.colorScheme.primaryContainer
+                                            else MaterialTheme.colorScheme.surface
+                                        )
+                                        .clickable {
+                                            selectedCustomer = c
+                                            showConfirm = true
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            c.name,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Text(
+                                            "Bal. ${formatMoney(c.balance)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel")
+                }
+            }
+        )
+    } else {
+        // Step 2: Confirmation
+        AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title = { Text("Confirm Transfer") },
+            text = {
+                Column {
+                    if (isBulk) {
+                        Text(
+                            "Transfer $count transactions from $currentCustomerName to ${selectedCustomer?.name}?",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    } else {
+                        Text(
+                            "Transfer \"${firstTxn.name}\" (${formatMoney(firstTxn.amount)}) from $currentCustomerName to ${selectedCustomer?.name}?",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    SplitOrEmiWarnings(
+                        isSplitGroup = isSplitGroup,
+                        isEmiPlan = isEmiPlan,
+                        isBulk = isBulk,
+                        withWarningIcons = false
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        if (isBulk) "Dates, amounts, accounts, and settlement statuses will be preserved."
+                        else "The transaction date, amount, account, and settlement status will be preserved.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    selectedCustomer?.let { c ->
+                        onTransfer(c.id, c.name)
+                    }
+                    showConfirm = false
+                }) {
+                    Text("Transfer", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirm = false }) {
+                    Text("Back")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun SplitOrEmiWarnings(
+    isSplitGroup: Boolean,
+    isEmiPlan: Boolean,
+    isBulk: Boolean,
+    withWarningIcons: Boolean
+) {
+    if (isSplitGroup && !isBulk) {
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = if (withWarningIcons) "⚠ This will move all split entries in this group together."
+            else "All split entries in this group will move together.",
+            style = MaterialTheme.typography.bodySmall,
+            color = warningColor()
+        )
+    }
+    if (isEmiPlan && !isBulk) {
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = if (withWarningIcons) "⚠ This will move all EMI installments in this plan together."
+            else "All EMI installments in this plan will move together.",
+            style = MaterialTheme.typography.bodySmall,
+            color = warningColor()
+        )
+    }
 }

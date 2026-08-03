@@ -12,9 +12,12 @@ export function formatMoney(amount: number): string {
 
 export function formatDate(dateStr: string): string {
   if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return dateStr;
-  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  // Parse ISO YYYY-MM-DD as local midnight to avoid timezone shift from UTC parsing
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return dateStr;
+  const date = new Date(y, m - 1, d);
+  if (isNaN(date.getTime())) return dateStr;
+  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 export function todayString(): string {

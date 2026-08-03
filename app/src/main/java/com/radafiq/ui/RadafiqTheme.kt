@@ -494,7 +494,7 @@ fun HeroPanel(
     val useDarkTheme = LocalRadafiqDarkTheme.current
     val animatable = remember(animationKey) { Animatable(0f) }
     var hasAnimated by rememberSaveable(animationKey) { mutableStateOf(false) }
-    LaunchedEffect(animationKey) {
+    LaunchedEffect(animationKey, amountValue) {
         if (!hasAnimated) {
             hasAnimated = true
             animatable.snapTo(0f)
@@ -640,7 +640,7 @@ fun MetricPill(
     val labelSpacer = if (compact) 4.dp else 6.dp
     val animatable = remember(animationKey) { Animatable(0f) }
     var hasAnimated by rememberSaveable(animationKey) { mutableStateOf(false) }
-    LaunchedEffect(animationKey) {
+    LaunchedEffect(animationKey, amountValue) {
         if (!hasAnimated) {
             hasAnimated = true
             animatable.snapTo(0f)
@@ -765,7 +765,7 @@ fun AccentValueRow(
 ) {
     val animatable = remember(animationKey) { Animatable(0f) }
     var hasAnimated by rememberSaveable(animationKey) { mutableStateOf(false) }
-    LaunchedEffect(animationKey) {
+    LaunchedEffect(animationKey, amountValue) {
         if (!hasAnimated) {
             hasAnimated = true
             animatable.snapTo(0f)
@@ -934,7 +934,7 @@ fun AnimatedMoney(
 ) {
     val animatable = remember(animationKey) { Animatable(0f) }
     var hasAnimated by rememberSaveable(animationKey) { mutableStateOf(false) }
-    LaunchedEffect(animationKey) {
+    LaunchedEffect(animationKey, value) {
         if (!hasAnimated) {
             hasAnimated = true
             animatable.snapTo(0f)

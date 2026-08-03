@@ -6,6 +6,8 @@ import { useApp } from '../context/AppContext';
 import { formatMoney } from '../utils/format';
 import { CardSummary, isVisibleInTransactions } from '../types/models';
 import AnimatedMoney from '../components/AnimatedMoney';
+import TiltedCard from '../components/animations/TiltedCard';
+import BlurText from '../components/animations/BlurText';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -23,13 +25,13 @@ const itemVariants = {
 function AccountRow({ card, onClick }: { card: CardSummary; onClick: () => void }) {
   const accentColor = card.accountKind === 'credit_card' ? 'var(--warning)' : 'var(--secondary)';
   return (
+    <TiltedCard maxTilt={5} glare={false} scale={1.005} perspective={1000}>
     <motion.div
       className="flow-card"
       style={{ '--card-accent': accentColor, cursor: 'pointer', marginBottom: '0.75rem' } as React.CSSProperties}
       onClick={onClick}
       variants={itemVariants}
       whileHover={{ y: -2, transition: { duration: 0.2 } }}
-      whileTap={{ scale: 0.99 }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ minWidth: 0 }}>
@@ -42,6 +44,7 @@ function AccountRow({ card, onClick }: { card: CardSummary; onClick: () => void 
         </div>
       </div>
     </motion.div>
+    </TiltedCard>
   );
 }
 
@@ -91,7 +94,7 @@ export default function AccountsPage() {
     >
       <motion.div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' }} variants={itemVariants}>
         <div>
-          <h2>Accounts</h2>
+          <BlurText as="h2" text="Accounts" delay={0.05} duration={0.35} blurAmount={6} />
           <p className="text-muted text-sm" style={{ marginTop: 4 }}>Monitor banks, credit cards, dues, and usage.</p>
         </div>
         <button className="btn btn-ghost" onClick={() => navigate('/settings')}>
@@ -135,13 +138,12 @@ export default function AccountsPage() {
                 Persons
               </div>
               {personCards.map(p => (
+                <TiltedCard key={p.accountId} maxTilt={5} glare={false} scale={1.005} perspective={1000}>
                 <motion.div
-                  key={p.accountId}
                   className="flow-card"
                   style={{ '--card-accent': 'var(--primary)', marginBottom: '0.75rem' } as React.CSSProperties}
                   variants={itemVariants}
                   whileHover={{ y: -2 }}
-                  whileTap={{ scale: 0.99 }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ minWidth: 0 }}>
@@ -154,6 +156,7 @@ export default function AccountsPage() {
                     </div>
                   </div>
                 </motion.div>
+                </TiltedCard>
               ))}
             </motion.div>
           )}

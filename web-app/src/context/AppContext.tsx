@@ -6,6 +6,7 @@ import {
   CustomerSummary,
   SavingsEntry,
   SettlementHistoryEntry,
+  TransferHistoryEntry,
   UserProfile,
   AppSettings,
   AppSecurityState,
@@ -196,6 +197,15 @@ interface AppContextValue {
     personName?: string;
   }) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
+  transferTransaction: (
+    transactionId: string,
+    newCustomerId: string,
+    newCustomerName: string,
+    oldCustomerId: string,
+    oldCustomerName: string,
+    splitGroupId?: string,
+    emiGroupId?: string,
+  ) => Promise<void>;
   addPartialPayment: (transactionId: string, amount: string) => Promise<void>;
   toggleTransactionSettled: (transactionId: string, isSettled: boolean) => Promise<void>;
 
@@ -222,6 +232,11 @@ interface AppContextValue {
   settlementHistory: SettlementHistoryEntry[];
   settlementHistoryLoading: boolean;
   loadSettlementHistory: (transactionId: string) => Promise<void>;
+
+  // Transfer History
+  transferHistory: TransferHistoryEntry[];
+  transferHistoryLoading: boolean;
+  loadTransferHistory: (transactionId: string) => Promise<void>;
 
   // Backup / Restore
   exportBackupToFile: () => Promise<void>;
@@ -261,6 +276,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [syncStatus, setSyncStatus] = useState<{ state: 'IDLE' | 'SYNCING' | 'SUCCESS' | 'ERROR'; message: string }>({ state: 'IDLE', message: '' });
   const [settlementHistory, setSettlementHistory] = useState<SettlementHistoryEntry[]>([]);
   const [settlementHistoryLoading, setSettlementHistoryLoading] = useState(false);
+  const [transferHistory, setTransferHistory] = useState<TransferHistoryEntry[]>([]);
+  const [transferHistoryLoading, setTransferHistoryLoading] = useState(false);
 
   const unsubscribeDataRef = useRef<(() => void)[]>([]);
   const unsubscribeProfileRef = useRef<(() => void) | null>(null);
@@ -281,41 +298,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
-      setAuthLoading(false);
 
       if (firebaseUser) {
         clearSecurityStorageForOtherUser(firebaseUser.uid);
 
-        // Sync security between cloud and localStorage
-        try {
-          const cloudData = await repo.loadSecurityFromCloud(firebaseUser.uid);
-          const localData = loadSecurityStorage();
-          if (cloudData && cloudData.passcodeHash) {
-            // Cloud has passcode — sync to local if local is empty or different user
-            if (!localData.passcodeHash || localData.ownerUid !== firebaseUser.uid) {
-              saveSecurityStorage({ ...cloudData, ownerUid: firebaseUser.uid });
-            }
-          } else if (localData.passcodeHash && localData.ownerUid === firebaseUser.uid) {
-            // Local has passcode but cloud doesn't — migrate to cloud
-            await repo.saveSecurityToCloud(firebaseUser.uid, {
-              passcodeHash: localData.passcodeHash,
-              passcodeSalt: localData.passcodeSalt,
-              lockEnabled: localData.lockEnabled,
-              recoveryQuestion: localData.recoveryQuestion,
-              recoveryAnswerHash: localData.recoveryAnswerHash,
-            });
-          }
-        } catch (e) {
-          console.error('Security cloud sync error:', e);
-        }
-
-        refreshSecurity();
-        // Refresh passkey state for this user
-        setHasPasskey(!!getPasskeyCredentialId(firebaseUser.uid));
-
-        // Start profile listener
+        // ── Start profile listener immediately (no await) ────────────
         setProfileLoading(true);
         unsubscribeProfileRef.current?.();
         unsubscribeProfileRef.current = repo.listenProfile(firebaseUser.uid, (p) => {
@@ -323,27 +312,72 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setProfileLoading(false);
         });
 
-        // Start data listeners
-        setDataLoading(true);
-        unsubscribeDataRef.current.forEach(u => u());
-        let firstSnapshot = true;
-        const unsubs = repo.listenAllData(firebaseUser.uid, (data) => {
-          setCards(data.accounts);
-          setCustomers(data.customers);
-          setDeletedCustomers(data.deletedCustomers);
-          if (firstSnapshot) {
-            firstSnapshot = false;
+        // ── Try cached data first (instant for returning users) ──────
+        repo.getAllDataCached(firebaseUser.uid).then(cached => {
+          setCards(cached.accounts);
+          setCustomers(cached.customers);
+          setDeletedCustomers(cached.deletedCustomers);
+          setDataLoading(false);
+        }).catch(() => {
+          // No cache (first visit) — use getDocs which is faster than onSnapshot
+          // because it's a single request-response, not a streaming connection.
+          return repo.getAllDataOnce(firebaseUser.uid);
+        }).then(onceData => {
+          if (onceData) {
+            setCards(onceData.accounts);
+            setCustomers(onceData.customers);
+            setDeletedCustomers(onceData.deletedCustomers);
             setDataLoading(false);
-          } else {
-            // Live update received — briefly show synced
+          }
+        }).catch(err => {
+          console.error('Initial data loading failed:', err);
+        });
+
+        // ── Subscribe to live listeners (background sync) ────────────
+        // These replace cached data with server-confirmed data when it arrives.
+        unsubscribeDataRef.current.forEach(u => u());
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+        const unsubs = repo.listenAllData(firebaseUser.uid, (data) => {
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            setCards(data.accounts);
+            setCustomers(data.customers);
+            setDeletedCustomers(data.deletedCustomers);
+            setDataLoading(false);
             setSyncStatus({ state: 'SUCCESS', message: 'Synced.' });
             if (syncResetTimerRef.current) clearTimeout(syncResetTimerRef.current);
             syncResetTimerRef.current = setTimeout(() => {
               setSyncStatus({ state: 'IDLE', message: '' });
             }, 2000);
-          }
+          }, 80);
         });
         unsubscribeDataRef.current = unsubs;
+
+        // ── Security sync: fire-and-forget (non-blocking) ──────────────
+        repo.loadSecurityFromCloud(firebaseUser.uid)
+          .then(cloudData => {
+            const localData = loadSecurityStorage();
+            if (cloudData && cloudData.passcodeHash) {
+              // Cloud has passcode — sync to local if local is empty or different user
+              if (!localData.passcodeHash || localData.ownerUid !== firebaseUser.uid) {
+                saveSecurityStorage({ ...cloudData, ownerUid: firebaseUser.uid });
+              }
+            } else if (localData.passcodeHash && localData.ownerUid === firebaseUser.uid) {
+              // Local has passcode but cloud doesn't — migrate to cloud
+              return repo.saveSecurityToCloud(firebaseUser.uid, {
+                passcodeHash: localData.passcodeHash,
+                passcodeSalt: localData.passcodeSalt,
+                lockEnabled: localData.lockEnabled,
+                recoveryQuestion: localData.recoveryQuestion,
+                recoveryAnswerHash: localData.recoveryAnswerHash,
+              });
+            }
+          })
+          .catch(e => console.error('Security cloud sync error:', e))
+          .finally(() => {
+            refreshSecurity();
+            setHasPasskey(!!getPasskeyCredentialId(firebaseUser.uid));
+          });
       } else {
         // Signed out
         unsubscribeProfileRef.current?.();
@@ -360,6 +394,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         refreshSecurity();
       }
     });
+
+    // Wait for Firebase Auth to fully resolve the initial session (IndexedDB persistence)
+    // before marking auth as loaded. This prevents the landing page flash for returning
+    // signed-in users — they see the spinner until their session is restored.
+    auth.authStateReady().finally(() => {
+      setAuthLoading(false);
+    });
+
     return () => unsub();
   }, []);
 
@@ -859,6 +901,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await repo.deleteTransaction(user.uid, id);
   }, [user]);
 
+  const transferTransaction = useCallback(async (
+    transactionId: string,
+    newCustomerId: string,
+    newCustomerName: string,
+    oldCustomerId: string,
+    oldCustomerName: string,
+    splitGroupId?: string,
+    emiGroupId?: string,
+  ) => {
+    if (!user) return;
+    await repo.transferTransaction(user.uid, transactionId, newCustomerId, newCustomerName, oldCustomerId, oldCustomerName, splitGroupId, emiGroupId);
+  }, [user]);
+
   const addPartialPayment = useCallback(async (transactionId: string, amount: string) => {
     if (!user) return;
     const parsed = parseFloat(amount);
@@ -882,6 +937,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSettlementHistory([]);
     } finally {
       setSettlementHistoryLoading(false);
+    }
+  }, [user]);
+
+  const loadTransferHistory = useCallback(async (transactionId: string) => {
+    if (!user) return;
+    setTransferHistoryLoading(true);
+    try {
+      const history = await repo.getTransferHistory(user.uid, transactionId);
+      setTransferHistory(history);
+    } catch (e) {
+      console.error('Failed to load transfer history:', e);
+      setTransferHistory([]);
+    } finally {
+      setTransferHistoryLoading(false);
     }
   }, [user]);
 
@@ -1120,6 +1189,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     convertEmiInstallmentToSplit,
     updateTransaction,
     deleteTransaction,
+    transferTransaction,
     addPartialPayment,
     toggleTransactionSettled,
     updateCreditCardDue,
@@ -1130,6 +1200,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     settlementHistory,
     settlementHistoryLoading,
     loadSettlementHistory,
+    transferHistory,
+    transferHistoryLoading,
+    loadTransferHistory,
     exportBackupToFile,
     importBackupFromFile,
     backupStatusMessage,

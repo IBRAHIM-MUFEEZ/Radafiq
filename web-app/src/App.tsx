@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { AnimatePresence, motion } from 'framer-motion';
 import { AppProvider, useApp } from './context/AppContext';
 import Layout from './components/Layout';
+import AnimatedSplashScreen from './components/AnimatedSplashScreen';
 
 // Critical pages loaded eagerly — users navigate here first and immediately
 import LandingPage from './pages/LandingPage';
@@ -26,11 +27,8 @@ const EmiSchedulePage = lazy(() => import('./pages/EmiSchedulePage'));
 
 function PageSkeleton() {
   return (
-    <div className="radafiq-bg" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', flexDirection: 'column', gap: 16 }}>
-      <div className="spinner" style={{ width: 48, height: 48, borderWidth: 4 }} />
-      <p className="text-muted text-sm" style={{ animation: 'breathe 2s ease-in-out infinite' }}>
-        Loading...
-      </p>
+    <div className="radafiq-bg" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
+      <div className="spinner" style={{ width: 32, height: 32, borderWidth: 3 }} />
     </div>
   );
 }
@@ -63,6 +61,7 @@ function AnimatedPage({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes() {
+  const location = useLocation();
   const { user, authLoading, profile, profileLoading, security, settings, dataLoading } = useApp();
 
   // Apply theme
@@ -71,14 +70,7 @@ function AppRoutes() {
   }, [settings.themeMode]);
 
   if (authLoading || profileLoading) {
-    return (
-      <div className="radafiq-bg" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', flexDirection: 'column', gap: 16 }}>
-        <div className="spinner" style={{ width: 48, height: 48, borderWidth: 4 }} />
-        <p className="text-muted text-sm" style={{ animation: 'breathe 2s ease-in-out infinite' }}>
-          Loading your finances...
-        </p>
-      </div>
-    );
+    return <AnimatedSplashScreen message="Loading your finances..." />;
   }
 
   // Not signed in — show landing page or login
@@ -123,21 +115,29 @@ function AppRoutes() {
 
   // Wait for Firestore data before rendering main app
   if (dataLoading) {
-    return (
-      <div className="radafiq-bg" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', flexDirection: 'column', gap: 16 }}>
-        <div className="spinner" style={{ width: 48, height: 48, borderWidth: 4 }} />
-        <p className="text-muted text-sm" style={{ animation: 'breathe 2s ease-in-out infinite' }}>
-          Loading your finances...
-        </p>
-      </div>
-    );
+    return <AnimatedSplashScreen message="Loading your data..." />;
+  }
+
+  // If user landed on a non-app URL (e.g. /login after sign-in), redirect to
+  // dashboard. Uses a hard redirect (window.location) for the initial redirect
+  // to avoid React Router timing issues where Navigate/useNavigate fire after
+  // the Layout has already mounted with the wrong URL. The hard redirect causes
+  // a page reload — Firebase Auth persists the session via IndexedDB, and the
+  // second load at /dashboard is fast (<500ms from cache).
+  const validAppPaths = ['/dashboard', '/customers', '/accounts', '/savings', '/emi', '/analytics', '/settings'];
+  const isOnValidPath = validAppPaths.some(p => location.pathname === p || location.pathname.startsWith(p + '/'));
+  if (!isOnValidPath) {
+    window.location.replace('/dashboard');
+    return null;
   }
 
   return (
     <Layout>
+      <Suspense fallback={null}>
+        <Background3D />
+      </Suspense>
       <AnimatedPage>
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/customers/:customerId" element={<CustomerDetail />} />
@@ -174,9 +174,6 @@ export default function App() {
   return (
     <BrowserRouter>
       <AppProvider>
-        <Suspense fallback={null}>
-          <Background3D />
-        </Suspense>
         <AppRoutes />
       </AppProvider>
     </BrowserRouter>

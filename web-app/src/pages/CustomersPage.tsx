@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -8,6 +8,7 @@ import { formatMoney } from '../utils/format';
 import { CustomerSummary } from '../types/models';
 import AnimatedAvatar from '../components/AnimatedAvatar';
 import AnimatedMoney from '../components/AnimatedMoney';
+import BlurText from '../components/animations/BlurText';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -22,52 +23,30 @@ const itemVariants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' as const } },
 };
 
-function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; onClick: () => void; index: number }) {
+const CustomerRow = React.memo(function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; onClick: () => void; index: number }) {
   const txnCount = customer.transactions.length;
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [tilt, setTilt] = useState({ x: 0, y: 0 });
   const [sparkle, setSparkle] = useState(false);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!cardRef.current) return;
-    const rect = cardRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width - 0.5;
-    const y = (e.clientY - rect.top) / rect.height - 0.5;
-    setTilt({ x: x * 6, y: -y * 6 });
-  }, []);
-
-  const handleMouseLeave = useCallback(() => {
-    setTilt({ x: 0, y: 0 });
-  }, []);
-
   const handleClick = useCallback((e: React.MouseEvent) => {
-    const rect = cardRef.current?.getBoundingClientRect();
-    if (rect) {
-      setSparkle(true);
-      setTimeout(() => setSparkle(false), 500);
-    }
+    setSparkle(true);
+    setTimeout(() => setSparkle(false), 500);
     onClick();
   }, [onClick]);
 
   return (
     <motion.div
-      ref={cardRef}
-      className="flow-card tilt-card customer-card"
+      className="flow-card customer-card"
       style={{
         cursor: 'pointer',
         marginBottom: '0.75rem',
-        transform: `perspective(800px) rotateX(${tilt.y}deg) rotateY(${tilt.x}deg)`,
-        transition: 'transform 0.15s ease, box-shadow 0.15s ease',
         position: 'relative',
         overflow: 'hidden',
       }}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.35, ease: 'easeOut' }}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
       onClick={handleClick}
-      whileHover={{ boxShadow: '0 4px 20px rgba(0,0,0,0.12)' }}
+      whileHover={{ scale: 1.008, y: -2, transition: { duration: 0.2 } }}
     >
       {/* Sparkle overlay */}
       {sparkle && (
@@ -104,9 +83,9 @@ function CustomerRow({ customer, onClick, index }: { customer: CustomerSummary; 
       </div>
     </motion.div>
   );
-}
+});
 
-function DeletedCustomerRow({ customer, onRestore, onDelete, index }: {
+const DeletedCustomerRow = React.memo(function DeletedCustomerRow({ customer, onRestore, onDelete, index }: {
   customer: CustomerSummary;
   onRestore: () => void;
   onDelete: () => void;
@@ -140,7 +119,7 @@ function DeletedCustomerRow({ customer, onRestore, onDelete, index }: {
       </div>
     </motion.div>
   );
-}
+});
 
 export default function CustomersPage() {
   const { customers, deletedCustomers, addCustomer, restoreCustomer, permanentlyDeleteCustomer, syncStatus, triggerSync } = useApp();
@@ -221,18 +200,22 @@ export default function CustomersPage() {
         variants={itemVariants}
       >
         <div>
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {showRecycleBin ? 'Recycle Bin' : 'Customers'}
-            {!showRecycleBin && customers.length > 0 && (
-              <span style={{
-                fontSize: '0.75rem', fontWeight: 600, color: 'var(--primary)',
-                background: 'color-mix(in srgb, var(--primary) 12%, transparent)',
-                padding: '2px 10px', borderRadius: 999,
-              }}>
-                {customers.length}
-              </span>
-            )}
-          </h2>
+          {showRecycleBin ? (
+            <h2>Recycle Bin</h2>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <BlurText as="h2" text="Customers" delay={0.05} duration={0.35} blurAmount={6} />
+              {customers.length > 0 && (
+                <span style={{
+                  fontSize: '0.75rem', fontWeight: 600, color: 'var(--primary)',
+                  background: 'color-mix(in srgb, var(--primary) 12%, transparent)',
+                  padding: '2px 10px', borderRadius: 999,
+                }}>
+                  {customers.length}
+                </span>
+              )}
+            </div>
+          )}
           <p className="text-muted text-sm" style={{ marginTop: 4 }}>
             {showRecycleBin ? 'Restore or permanently delete customers.' : 'Manage customer ledgers and transactions.'}
           </p>

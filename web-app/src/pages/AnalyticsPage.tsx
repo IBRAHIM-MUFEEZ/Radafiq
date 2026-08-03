@@ -4,6 +4,8 @@ import { useApp } from '../context/AppContext';
 import { formatMoney } from '../utils/format';
 import { CardSummary, CustomerSummary } from '../types/models';
 import AnimatedMoney from '../components/AnimatedMoney';
+import BlurText from '../components/animations/BlurText';
+import ScrollReveal from '../components/animations/ScrollReveal';
 
 type Metric = 'USAGE' | 'PAID' | 'OUTSTANDING';
 
@@ -76,7 +78,7 @@ export default function AnalyticsPage() {
       animate="visible"
     >
       <motion.div style={{ marginBottom: '1.5rem' }} variants={itemVariants}>
-        <h2>Analytics</h2>
+        <BlurText as="h2" text="Analytics" delay={0.05} duration={0.35} blurAmount={6} />
         <p className="text-muted text-sm" style={{ marginTop: 4 }}>Inspect accounts and customers with quick metric filters.</p>
       </motion.div>
 
@@ -91,6 +93,7 @@ export default function AnalyticsPage() {
           {/* Overall summary */}
           {visibleCards.length > 0 && (
             <>
+              <ScrollReveal direction="up" distance={20}>
               <motion.div className="hero-panel" style={{ marginBottom: '1rem' }} variants={itemVariants}>
                 <p style={{ fontSize: '0.8125rem', fontWeight: 600, opacity: 0.8, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>Total Balance</p>
                 <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: 4 }}><AnimatedMoney value={totalBalance} duration={800} /></h1>
@@ -114,10 +117,12 @@ export default function AnalyticsPage() {
                   <span className="accent-value" style={{ color: totalBalance > 0 ? 'var(--warning)' : 'var(--primary)' }}><AnimatedMoney value={totalBalance} /></span>
                 </div>
               </motion.div>
+              </ScrollReveal>
             </>
           )}
 
           {/* Account analytics */}
+          <ScrollReveal direction="up" distance={20}>
           <motion.div className="flow-card" style={{ marginBottom: '1rem' }} variants={itemVariants}>
             <h3 style={{ marginBottom: '1rem' }}>Account Analytics</h3>
 
@@ -213,8 +218,10 @@ export default function AnalyticsPage() {
               ))
             )}
           </motion.div>
+          </ScrollReveal>
 
           {/* Customer analytics */}
+          <ScrollReveal direction="up" distance={20}>
           {sortedCustomers.length > 0 && selectedCustomer && (
             <motion.div className="flow-card" variants={itemVariants}>
               <h3 style={{ marginBottom: '1rem' }}>Customer Analytics</h3>
@@ -272,6 +279,7 @@ export default function AnalyticsPage() {
               </p>
             </motion.div>
           )}
+          </ScrollReveal>
         </>
       )}
     </motion.div>

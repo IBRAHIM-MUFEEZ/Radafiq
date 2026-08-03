@@ -12,6 +12,7 @@ import com.radafiq.data.models.IndianAccountCatalog
 import com.radafiq.data.models.SavingsEntry
 import com.radafiq.data.models.SavingsType
 import com.radafiq.data.models.SettlementHistoryEntry
+import com.radafiq.data.models.TransferHistoryEntry
 import com.radafiq.data.auth.LocalIdentityRepository
 import com.google.android.gms.tasks.Task
 import com.google.firebase.firestore.DocumentReference
@@ -297,6 +298,70 @@ class FirebaseRepository(
 
     suspend fun deleteTransaction(transactionId: String) {
         transactionsCollection().document(transactionId).delete().await()
+    }
+
+    /**
+     * Transfer a transaction (and its split/EMI group siblings) from one customer to another.
+     * Only updates customerId and customerName — preserves amount, date, account, settlement,
+     * partial payments, and all other fields.
+     *
+     * @param oldCustomerId Current owner of the transaction (passed from ViewModel, no re-fetch).
+     * @param oldCustomerName Current owner name.
+     */
+    suspend fun transferTransaction(
+        transactionId: String,
+        newCustomerId: String,
+        newCustomerName: String,
+        oldCustomerId: String,
+        oldCustomerName: String,
+        splitGroupId: String = "",
+        emiGroupId: String = ""
+    ) {
+        val refsToUpdate = mutableSetOf(transactionId)
+
+        // Query split-group and EMI-group siblings in parallel (independent reads)
+        coroutineScope {
+            val splitDeferred = if (splitGroupId.isNotBlank()) async {
+                transactionsCollection()
+                    .whereEqualTo("splitGroupId", splitGroupId)
+                    .get()
+                    .await()
+            } else null
+
+            val emiDeferred = if (emiGroupId.isNotBlank()) async {
+                transactionsCollection()
+                    .whereEqualTo("emiGroupId", emiGroupId)
+                    .get()
+                    .await()
+            } else null
+
+            splitDeferred?.await()?.documents?.forEach { refsToUpdate.add(it.id) }
+            emiDeferred?.await()?.documents?.forEach { refsToUpdate.add(it.id) }
+        }
+
+        val batch = db.batch()
+        refsToUpdate.forEach { id ->
+            batch.update(
+                transactionsCollection().document(id),
+                mapOf("customerId" to newCustomerId, "customerName" to newCustomerName)
+            )
+        }
+
+        // Record transfer history under ALL sibling transaction IDs in the same batch
+        // so clicking "View Transfer History" on any sibling shows the same data.
+        refsToUpdate.forEach { id ->
+            val ref = transferHistoryCollection(id).document()
+            batch.set(ref, mapOf(
+                "fromCustomerId" to oldCustomerId,
+                "fromCustomerName" to oldCustomerName,
+                "toCustomerId" to newCustomerId,
+                "toCustomerName" to newCustomerName,
+                "transactionIds" to refsToUpdate.toList(),
+                "timestamp" to FieldValue.serverTimestamp()
+            ))
+        }
+
+        batch.commit().await()
     }
 
     suspend fun addPartialPayment(
@@ -971,6 +1036,29 @@ class FirebaseRepository(
 
     private fun settlementHistoryCollection(transactionId: String) =
         transactionsCollection().document(transactionId).collection("settlementHistory")
+
+    private fun transferHistoryCollection(transactionId: String) =
+        transactionsCollection().document(transactionId).collection("transferHistory")
+
+    suspend fun getTransferHistory(transactionId: String): List<TransferHistoryEntry> {
+        val snap = transferHistoryCollection(transactionId)
+            .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.ASCENDING)
+            .get()
+            .await()
+        return snap.documents.map { doc ->
+            val ts = doc.getTimestamp("timestamp")
+            val millis = ts?.toDate()?.time ?: 0L
+            TransferHistoryEntry(
+                id = doc.id,
+                fromCustomerId = doc.getString("fromCustomerId") ?: "",
+                fromCustomerName = doc.getString("fromCustomerName") ?: "",
+                toCustomerId = doc.getString("toCustomerId") ?: "",
+                toCustomerName = doc.getString("toCustomerName") ?: "",
+                transactionIds = (doc.get("transactionIds") as? List<String>) ?: emptyList(),
+                timestamp = millis
+            )
+        }
+    }
 
     suspend fun recordSettlementHistory(
         transactionId: String,

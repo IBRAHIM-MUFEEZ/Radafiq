@@ -371,3 +371,17 @@ data class CustomerSettlementEntry(
     val timestamp: Long get() = base.timestamp
     val label: String get() = base.label
 }
+
+/**
+ * Record of a transaction being transferred from one customer to another.
+ * Stored in users/{uid}/transactions/{transactionId}/transferHistory/.
+ */
+data class TransferHistoryEntry(
+    val id: String,
+    val fromCustomerId: String,
+    val fromCustomerName: String,
+    val toCustomerId: String,
+    val toCustomerName: String,
+    val transactionIds: List<String>,
+    val timestamp: Long = 0L
+)

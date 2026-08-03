@@ -7,6 +7,9 @@ import { formatMoney, getGreeting } from '../utils/format';
 import { CardSummary, isVisibleInTransactions, isScheduledForFutureMonth } from '../types/models';
 import AnimatedAvatar from '../components/AnimatedAvatar';
 import AnimatedMoney from '../components/AnimatedMoney';
+import SpotlightCard from '../components/animations/SpotlightCard';
+import BlurText from '../components/animations/BlurText';
+import ScrollReveal from '../components/animations/ScrollReveal';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -24,24 +27,24 @@ const itemVariants = {
 // ── Hero panel ────────────────────────────────────────────────────────────────
 function HeroPanel({ title, value, subtitle }: { title: string; value: number; subtitle: string }) {
   return (
-    <motion.div
-      className="hero-panel"
-      style={{ marginBottom: '1rem' }}
-      variants={itemVariants}
-      whileHover={{ scale: 1.01 }}
-      transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-    >
-      <p style={{ fontSize: '0.8125rem', fontWeight: 600, opacity: 0.8, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>{title}</p>
-      <h1 style={{ fontSize: '2.25rem', fontWeight: 800, marginBottom: 8, letterSpacing: '-0.02em' }}>
-        <AnimatedMoney value={value} duration={800} />
-      </h1>
-      <p style={{ fontSize: '0.875rem', opacity: 0.75 }}>{subtitle}</p>
-    </motion.div>
+    <SpotlightCard spotlightColor="rgba(91, 127, 255, 0.06)">
+      <motion.div
+        className="hero-panel"
+        style={{ marginBottom: '1rem' }}
+        variants={itemVariants}
+      >
+        <p style={{ fontSize: '0.8125rem', fontWeight: 600, opacity: 0.8, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>{title}</p>
+        <h1 style={{ fontSize: '2.25rem', fontWeight: 800, marginBottom: 8, letterSpacing: '-0.02em' }}>
+          <AnimatedMoney value={value} duration={800} />
+        </h1>
+        <p style={{ fontSize: '0.875rem', opacity: 0.75 }}>{subtitle}</p>
+      </motion.div>
+    </SpotlightCard>
   );
 }
 
 // ── Activity card (per account) ───────────────────────────────────────────────
-function ActivityCard({ card, currentDue, emiOutstanding }: {
+const ActivityCard = React.memo(function ActivityCard({ card, currentDue, emiOutstanding }: {
   card: CardSummary;
   currentDue: number;
   emiOutstanding: number;
@@ -51,6 +54,7 @@ function ActivityCard({ card, currentDue, emiOutstanding }: {
   const [expanded, setExpanded] = useState(false);
 
   return (
+    <SpotlightCard spotlightColor={isCredit ? 'rgba(245, 87, 108, 0.06)' : 'rgba(45, 212, 160, 0.06)'}>
     <motion.div
       className="flow-card"
       style={{ '--card-accent': accentColor, marginBottom: '0.75rem', cursor: 'pointer' } as React.CSSProperties}
@@ -142,8 +146,9 @@ function ActivityCard({ card, currentDue, emiOutstanding }: {
         </div>
       </div>
     </motion.div>
+    </SpotlightCard>
   );
-}
+});
 
 // ── Person summary card ───────────────────────────────────────────────────────
 interface PersonSummary {
@@ -153,8 +158,9 @@ interface PersonSummary {
   totalDue: number;
 }
 
-function PersonCard({ person }: { person: PersonSummary }) {
+const PersonCard = React.memo(function PersonCard({ person }: { person: PersonSummary }) {
   return (
+    <SpotlightCard spotlightColor="rgba(167, 139, 250, 0.06)">
     <motion.div
       className="flow-card"
       style={{ '--card-accent': 'var(--primary)', marginBottom: '0.75rem' } as React.CSSProperties}
@@ -176,8 +182,9 @@ function PersonCard({ person }: { person: PersonSummary }) {
         </div>
       </div>
     </motion.div>
+    </SpotlightCard>
   );
-}
+});
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
@@ -261,7 +268,7 @@ export default function Dashboard() {
             {greeting}
             <Sparkles size={12} style={{ color: 'var(--warning)', opacity: 0.6 }} />
           </p>
-          <h2 style={{ marginTop: 2 }}>{name}</h2>
+          <BlurText as="h2" text={name} delay={0.1} duration={0.4} blurAmount={8} />
         </div>
         <AnimatedAvatar
           name={name}
@@ -280,6 +287,7 @@ export default function Dashboard() {
       />
 
       {/* Metrics */}
+      <ScrollReveal direction="up" distance={20}>
       <motion.div className="flow-card" style={{ marginBottom: '1.5rem' }} variants={itemVariants}>
         <div className="two-col">
           <div className="metric-pill">
@@ -296,8 +304,10 @@ export default function Dashboard() {
           </div>
         </div>
       </motion.div>
+      </ScrollReveal>
 
       {/* Account Activity */}
+      <ScrollReveal direction="up" distance={20}>
       <motion.div style={{ marginBottom: '1rem' }} variants={itemVariants}>
         <h3 style={{ marginBottom: 4 }}>Account Activity</h3>
         <p className="text-muted text-sm" style={{ marginBottom: '1rem' }}>Live summary of your accounts and person balances.</p>
@@ -347,6 +357,7 @@ export default function Dashboard() {
           </motion.div>
         )}
       </motion.div>
+      </ScrollReveal>
     </motion.div>
   );
 }

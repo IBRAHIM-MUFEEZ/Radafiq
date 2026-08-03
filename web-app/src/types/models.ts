@@ -168,6 +168,24 @@ export function isVisibleInTransactions(t: CustomerTransaction, referenceDate: D
   return effectiveDate <= referenceDate;
 }
 
+/**
+ * Returns the YYYY-MM-DD date string to use for comparison, matching Android's
+ * CustomerTransaction.transactionDate getter: for EMIs with a dueDate,
+ * returns (dueDate - 20 days) instead of the stored transactionDate.
+ *
+ * Non-EMI transactions return the raw transactionDate.
+ */
+export function getEffectiveDateStr(t: CustomerTransaction): string {
+  if (!isEmi(t) || !t.dueDate) return t.transactionDate;
+  const baseDate = parseLocalDate(t.dueDate);
+  if (isNaN(baseDate.getTime())) return t.transactionDate;
+  const effectiveDate = new Date(baseDate.getTime() - 20 * 24 * 60 * 60 * 1000);
+  const y = effectiveDate.getFullYear();
+  const m = String(effectiveDate.getMonth() + 1).padStart(2, '0');
+  const d = String(effectiveDate.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 /** Returns true if the EMI installment's due date has passed and it is not settled. */
 export function isEmiOverdue(t: CustomerTransaction, referenceDate: Date = localToday()): boolean {
   if (!isEmi(t) || t.isSettled) return false;
@@ -290,6 +308,16 @@ export interface AppSettings {
 }
 
 // ── Settlement History ─────────────────────────────────────────────────────────
+
+export interface TransferHistoryEntry {
+  id: string;
+  fromCustomerId: string;
+  fromCustomerName: string;
+  toCustomerId: string;
+  toCustomerName: string;
+  transactionIds: string[];
+  timestamp: number;
+}
 
 export interface SettlementHistoryEntry {
   id: string;

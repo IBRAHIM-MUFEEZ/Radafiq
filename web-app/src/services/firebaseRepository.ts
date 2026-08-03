@@ -6,6 +6,7 @@ import {
   deleteDoc,
   getDoc,
   getDocs,
+  getDocsFromCache,
   onSnapshot,
   writeBatch,
   serverTimestamp,
@@ -26,6 +27,7 @@ import {
   CustomerTransaction,
   SavingsEntry,
   SettlementHistoryEntry,
+  TransferHistoryEntry,
   FirestoreBackupPayload,
   BackupRecord,
   accountKindFromStorage,
@@ -64,6 +66,10 @@ function savingsCol(uid: string) {
 
 function settlementHistoryCol(uid: string, transactionId: string) {
   return collection(db, 'users', uid, 'transactions', transactionId, 'settlementHistory');
+}
+
+function transferHistoryCol(uid: string, transactionId: string) {
+  return collection(db, 'users', uid, 'transactions', transactionId, 'transferHistory');
 }
 
 function profileDoc(uid: string) {
@@ -407,6 +413,52 @@ export function listenAllData(
   return [u1, u2, u3, u4, u5];
 }
 
+/**
+ * Read all user data via one-shot getDocs (faster than onSnapshot for first load).
+ * Unlike onSnapshot which establishes a streaming WebSocket connection, getDocs
+ * uses a single request-response — fewer round-trips, lower latency on first visit.
+ */
+export async function getAllDataOnce(uid: string): Promise<{
+  accounts: CardSummary[];
+  customers: CustomerSummary[];
+  deletedCustomers: CustomerSummary[];
+}> {
+  const [customerSnap, accountSnap, txnSnap, paymentSnap, savingsSnap] = await Promise.all([
+    getDocs(customersCol(uid)),
+    getDocs(accountsCol(uid)),
+    getDocs(transactionsCol(uid)),
+    getDocs(paymentsCol(uid)),
+    getDocs(savingsCol(uid)),
+  ]);
+  return buildAppData(
+    customerSnap.docs, accountSnap.docs, txnSnap.docs,
+    paymentSnap.docs, savingsSnap.docs
+  );
+}
+
+/**
+ * Read all user data from Firestore's local IndexedDB cache.
+ * Returns instantly (<50ms) if cache exists, or throws if this is a first visit
+ * and no cache is available yet — caller must fall back to listenAllData.
+ */
+export async function getAllDataCached(uid: string): Promise<{
+  accounts: CardSummary[];
+  customers: CustomerSummary[];
+  deletedCustomers: CustomerSummary[];
+}> {
+  const [customerSnap, accountSnap, txnSnap, paymentSnap, savingsSnap] = await Promise.all([
+    getDocsFromCache(customersCol(uid)),
+    getDocsFromCache(accountsCol(uid)),
+    getDocsFromCache(transactionsCol(uid)),
+    getDocsFromCache(paymentsCol(uid)),
+    getDocsFromCache(savingsCol(uid)),
+  ]);
+  return buildAppData(
+    customerSnap.docs, accountSnap.docs, txnSnap.docs,
+    paymentSnap.docs, savingsSnap.docs
+  );
+}
+
 // ── Customer CRUD ─────────────────────────────────────────────────────────────
 
 export async function addCustomer(uid: string, name: string): Promise<string> {
@@ -623,6 +675,79 @@ export async function toggleTransactionSettled(uid: string, transactionId: strin
     previousIsSettled: !isSettled,
     newIsSettled: isSettled,
     date: isSettled ? settledDate : new Date().toISOString().split('T')[0],
+  });
+}
+
+/**
+ * Transfer a transaction (and its split/EMI group siblings) from one customer to another.
+ * Only updates customerId and customerName — preserves amount, date, account, settlement,
+ * partial payments, and all other fields.
+ */
+export async function transferTransaction(
+  uid: string,
+  transactionId: string,
+  newCustomerId: string,
+  newCustomerName: string,
+  oldCustomerId: string,
+  oldCustomerName: string,
+  splitGroupId?: string,
+  emiGroupId?: string,
+): Promise<void> {
+  const batch = writeBatch(db);
+  const refsToUpdate: Set<string> = new Set([transactionId]);
+
+  // Run split and EMI queries in parallel
+  const [splitSnap, emiSnap] = await Promise.all([
+    splitGroupId
+      ? getDocs(query(transactionsCol(uid), where('splitGroupId', '==', splitGroupId)))
+      : Promise.resolve(null),
+    emiGroupId
+      ? getDocs(query(transactionsCol(uid), where('emiGroupId', '==', emiGroupId)))
+      : Promise.resolve(null),
+  ]);
+
+  splitSnap?.forEach(d => refsToUpdate.add(d.id));
+  emiSnap?.forEach(d => refsToUpdate.add(d.id));
+
+  refsToUpdate.forEach(id => {
+    batch.update(doc(transactionsCol(uid), id), {
+      customerId: newCustomerId,
+      customerName: newCustomerName,
+    });
+  });
+
+  // Record transfer history under ALL sibling transaction IDs
+  refsToUpdate.forEach(id => {
+    const transferHistoryRef = doc(transferHistoryCol(uid, id));
+    batch.set(transferHistoryRef, {
+      fromCustomerId: oldCustomerId,
+      fromCustomerName: oldCustomerName,
+      toCustomerId: newCustomerId,
+      toCustomerName: newCustomerName,
+      transactionIds: Array.from(refsToUpdate),
+      timestamp: serverTimestamp(),
+    });
+  });
+
+  await batch.commit();
+}
+
+export async function getTransferHistory(uid: string, transactionId: string): Promise<TransferHistoryEntry[]> {
+  const snapshot = await getDocs(
+    query(transferHistoryCol(uid, transactionId), orderBy('timestamp', 'asc'))
+  );
+  return snapshot.docs.map(d => {
+    const data = d.data();
+    const ts = data.timestamp as { toMillis?: () => number; seconds?: number; nanoseconds?: number } | null;
+    return {
+      id: d.id,
+      fromCustomerId: (data.fromCustomerId as string) ?? '',
+      fromCustomerName: (data.fromCustomerName as string) ?? '',
+      toCustomerId: (data.toCustomerId as string) ?? '',
+      toCustomerName: (data.toCustomerName as string) ?? '',
+      transactionIds: (data.transactionIds as string[]) ?? [],
+      timestamp: ts?.toMillis?.() ?? (ts?.seconds ?? 0) * 1000,
+    };
   });
 }
 

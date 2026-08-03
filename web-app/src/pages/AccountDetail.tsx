@@ -6,6 +6,9 @@ import { useApp } from '../context/AppContext';
 import { formatMoney, formatDate } from '../utils/format';
 import { isVisibleInTransactions } from '../types/models';
 import AnimatedMoney from '../components/AnimatedMoney';
+import SpotlightCard from '../components/animations/SpotlightCard';
+import TiltedCard from '../components/animations/TiltedCard';
+import BlurText from '../components/animations/BlurText';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -19,6 +22,39 @@ const itemVariants = {
   hidden: { opacity: 0, y: 16 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' as const } },
 };
+
+// ── Memoized customer row for account detail list ──────────────────────────────
+
+const AccountCustomerRow = React.memo(function AccountCustomerRow({ customer, used, due, onClick }: {
+  customer: { id: string; name: string };
+  used: number;
+  due: number;
+  onClick: () => void;
+}) {
+  return (
+    <TiltedCard maxTilt={5} glare={false} scale={1.005} perspective={1000}>
+    <motion.div
+      className="flow-card"
+      style={{ cursor: 'pointer', marginBottom: '0.75rem' }}
+      onClick={onClick}
+      variants={itemVariants}
+      whileHover={{ y: -2 }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className="avatar">{customer.name.slice(0, 2).toUpperCase()}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="truncate font-semibold">{customer.name}</div>
+          <div className="text-muted text-sm">Used <AnimatedMoney value={used} /></div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontWeight: 700, color: due > 0 ? 'var(--warning)' : 'var(--primary)' }}><AnimatedMoney value={due} /></div>
+          <div className="text-muted text-xs">{due > 0 ? 'Due' : 'Settled'}</div>
+        </div>
+      </div>
+    </motion.div>
+    </TiltedCard>
+  );
+});
 
 export default function AccountDetail() {
   const { accountId } = useParams<{ accountId: string }>();
@@ -84,13 +120,13 @@ export default function AccountDetail() {
       </motion.div>
 
       {/* Account summary */}
+      <SpotlightCard spotlightColor={card.accountKind === 'credit_card' ? 'rgba(245, 87, 108, 0.06)' : 'rgba(45, 212, 160, 0.06)'}>
       <motion.div
         className="flow-card"
         style={{ '--card-accent': accentColor, marginBottom: '1rem' } as React.CSSProperties}
         variants={itemVariants}
-        whileHover={{ y: -1 }}
       >
-        <h2 style={{ marginBottom: 4 }}>{card.name}</h2>
+        <BlurText as="h2" text={card.name} delay={0.05} duration={0.35} blurAmount={6} style={{ marginBottom: 4 }} />
         <p className="text-muted text-sm" style={{ marginBottom: '1rem' }}>
           {card.accountKind === 'credit_card' ? 'Credit Card' : 'Bank Account'}
         </p>
@@ -156,33 +192,20 @@ export default function AccountDetail() {
           </>
         )}
       </motion.div>
+      </SpotlightCard>
 
       {/* Customers using this account */}
       {accountCustomers.length > 0 && (
         <>
           <motion.h3 style={{ marginBottom: '0.75rem' }} variants={itemVariants}>Customers</motion.h3>
-          {accountCustomers.map(({ customer, used, due }, i) => (
-            <motion.div
+          {accountCustomers.map(({ customer, used, due }) => (
+            <AccountCustomerRow
               key={customer.id}
-              className="flow-card"
-              style={{ cursor: 'pointer', marginBottom: '0.75rem' }}
+              customer={customer}
+              used={used}
+              due={due}
               onClick={() => navigate(`/customers/${customer.id}`)}
-              variants={itemVariants}
-              whileHover={{ y: -2 }}
-              whileTap={{ scale: 0.99 }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div className="avatar">{customer.name.slice(0, 2).toUpperCase()}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="truncate font-semibold">{customer.name}</div>
-                  <div className="text-muted text-sm">Used <AnimatedMoney value={used} /></div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontWeight: 700, color: due > 0 ? 'var(--warning)' : 'var(--primary)' }}><AnimatedMoney value={due} /></div>
-                  <div className="text-muted text-xs">{due > 0 ? 'Due' : 'Settled'}</div>
-                </div>
-              </div>
-            </motion.div>
+            />
           ))}
         </>
       )}

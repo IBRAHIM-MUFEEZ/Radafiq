@@ -15,9 +15,12 @@ import com.radafiq.data.models.CustomerSummary
 import com.radafiq.data.models.CustomerTransaction
 import com.radafiq.data.models.FirestoreBackupPayload
 import com.radafiq.data.models.SettlementHistoryEntry
+import com.radafiq.data.models.TransferHistoryEntry
 import com.radafiq.data.models.SplitEntry
 import com.radafiq.data.profile.UserProfileRepository
 import com.radafiq.data.repository.FirebaseRepository
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
 import com.radafiq.data.security.AppSecurityRepository
 import com.radafiq.data.settings.AppSettingsRepository
 import java.time.LocalDate
@@ -141,8 +144,7 @@ internal fun computeAggregates(
     val availableKinds = buildList {
         visibleCards.mapTo(this) { it.accountKind }
         if (customerAgg.personSummaries.isNotEmpty() && !contains(AccountKind.PERSON)) add(AccountKind.PERSON)
-        distinct()
-    }
+    }.distinct()
 
     val savingsCustomers = customers.filter { it.savingsBalance > 0.0 }
         .sortedByDescending { it.savingsBalance }
@@ -156,6 +158,31 @@ internal fun computeAggregates(
         availableKinds = availableKinds,
         savingsCustomers = savingsCustomers
     )
+}
+
+/**
+ * Events emitted by [MainViewModel.transferTransaction] to signal the UI
+ * that a transfer has completed (success) or failed (rollback applied).
+ */
+sealed class TransferEvent {
+    data class Success(
+        val transactions: List<CustomerTransaction>,
+        val fromCustomerId: String,
+        val fromCustomerName: String,
+        val toCustomerId: String,
+        val toCustomerName: String
+    ) : TransferEvent()
+    data class Failure(
+        val transactionId: String,
+        val error: String
+    ) : TransferEvent()
+}
+
+/** Unique grouping key for deduplication — splitGroupId, emiGroupId, or plain transaction id. */
+fun CustomerTransaction.groupKey(): String = when {
+    splitGroupId.isNotBlank() -> "s:$splitGroupId"
+    emiGroupId.isNotBlank() -> "e:$emiGroupId"
+    else -> "t:$id"
 }
 
 class MainViewModel(
@@ -179,6 +206,33 @@ class MainViewModel(
 
     private val _settlementHistoryLoading = MutableStateFlow(false)
     val settlementHistoryLoading: StateFlow<Boolean> = _settlementHistoryLoading.asStateFlow()
+
+    // ── Transfer History state ──────────────────────────────────────────────────
+    private val _transferHistory = MutableStateFlow<List<TransferHistoryEntry>>(emptyList())
+    val transferHistory: StateFlow<List<TransferHistoryEntry>> = _transferHistory.asStateFlow()
+
+    private val _transferHistoryLoading = MutableStateFlow(false)
+    val transferHistoryLoading: StateFlow<Boolean> = _transferHistoryLoading.asStateFlow()
+
+    // ── Transfer event channel (signals UI when Firestore write completes) ──────────
+    private val _transferEvents = Channel<TransferEvent>(Channel.BUFFERED)
+    val transferEvents = _transferEvents.receiveAsFlow()
+
+    fun loadTransferHistory(transactionId: String) {
+        viewModelScope.launch {
+            // Clear stale data immediately so we don't flash previous transaction's history
+            _transferHistory.value = emptyList()
+            _transferHistoryLoading.value = true
+            try {
+                _transferHistory.value = repository.getTransferHistory(transactionId)
+            } catch (e: Exception) {
+                android.util.Log.e("TransferHistory", "Failed to load history: ${e.localizedMessage}", e)
+                _transferHistory.value = emptyList()
+            } finally {
+                _transferHistoryLoading.value = false
+            }
+        }
+    }
 
     // ── Pre-computed dashboard aggregates (computed off main thread) ─────────────────
     private val _aggregates = MutableStateFlow(DashboardAggregates())
@@ -858,6 +912,82 @@ class MainViewModel(
                 android.util.Log.d("DeleteTxn", "Firestore delete SUCCESS: $transactionId")
             } catch (e: Exception) {
                 android.util.Log.e("DeleteTxn", "Firestore delete FAILED: $transactionId — ${e.localizedMessage}", e)
+            }
+        }
+    }
+
+    /**
+     * Transfer a transaction (and its split/EMI group siblings) from one customer to another.
+     * Optimistically updates both the source and target customer's transaction lists.
+     * Emits [TransferEvent.Success] on Firestore write success, or [TransferEvent.Failure]
+     * on failure (with automatic rollback of the optimistic update).
+     */
+    fun transferTransaction(
+        transaction: CustomerTransaction,
+        newCustomerId: String,
+        newCustomerName: String
+    ) {
+        val transactionId = transaction.id
+        if (transactionId.isBlank()) return
+        // Guard against self-transfer (defense-in-depth — UI should prevent this too)
+        if (transaction.customerId == newCustomerId) return
+
+        // Pre-identify siblings from the SOURCE customer (siblings still live on source)
+        val sourceCustomer = _customers.value.find { it.id == transaction.customerId }
+        val sourceSiblings = sourceCustomer?.transactions?.filter {
+            (transaction.splitGroupId.isNotBlank() && it.splitGroupId == transaction.splitGroupId) ||
+            (transaction.emiGroupId.isNotBlank() && it.emiGroupId == transaction.emiGroupId)
+        }?.filter { it.id != transactionId } ?: emptyList()
+        val oldCustomerName = sourceCustomer?.name ?: ""
+
+        // Save previous state for rollback on Firestore write failure
+        val previousCustomers = _customers.value
+
+        // Optimistic update
+        _customers.value = _customers.value.map { customer ->
+            if (customer.id == transaction.customerId) {
+                // Remove transaction AND all siblings from source
+                val idsToRemove = (listOf(transactionId) + sourceSiblings.map { it.id }).toSet()
+                val cleaned = customer.transactions.filter { it.id !in idsToRemove }
+                rebuildSummary(customer, cleaned)
+            } else if (customer.id == newCustomerId) {
+                // Add transaction AND all siblings to target
+                val siblingsUpdated = sourceSiblings.map { it.copy(customerId = newCustomerId) }
+                val updatedTxn = transaction.copy(customerId = newCustomerId)
+                val newTxns = customer.transactions + siblingsUpdated + updatedTxn
+                rebuildSummary(customer, newTxns)
+            } else {
+                customer
+            }
+        }
+
+        viewModelScope.launch {
+            try {
+                repository.transferTransaction(
+                    transactionId = transactionId,
+                    newCustomerId = newCustomerId,
+                    newCustomerName = newCustomerName,
+                    oldCustomerId = transaction.customerId,
+                    oldCustomerName = oldCustomerName,
+                    splitGroupId = transaction.splitGroupId,
+                    emiGroupId = transaction.emiGroupId
+                )
+                // Signal UI that transfer committed — only now should it set undo state
+                _transferEvents.send(TransferEvent.Success(
+                    transactions = listOf(transaction) + sourceSiblings,
+                    fromCustomerId = transaction.customerId,
+                    fromCustomerName = oldCustomerName,
+                    toCustomerId = newCustomerId,
+                    toCustomerName = newCustomerName
+                ))
+            } catch (e: Exception) {
+                android.util.Log.e("Transfer", "transferTransaction FAILED: ${e.localizedMessage}", e)
+                // Rollback optimistic update
+                _customers.value = previousCustomers
+                _transferEvents.send(TransferEvent.Failure(
+                    transactionId = transactionId,
+                    error = e.localizedMessage ?: "Unknown error"
+                ))
             }
         }
     }

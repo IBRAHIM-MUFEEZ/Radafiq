@@ -853,7 +853,8 @@ class MainActivity : FragmentActivity() {
                                 selectedAccountIds = settingsState.selectedAccountIds,
                                 vm = mainViewModel,
                                 onBack = { navController.popBackStack() },
-                                onOpenSavings = { id -> navController.navigate("customerSavings/$id") }
+                                onOpenSavings = { id -> navController.navigate("customerSavings/$id") },
+                                snackbarHostState = snackbarHostState
                             )
                         }
 

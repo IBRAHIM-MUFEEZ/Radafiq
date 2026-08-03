@@ -1,15 +1,20 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { motion, useInView } from 'framer-motion';
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import RadafiqLogo from '../components/RadafiqLogo';
+import SplitText from '../components/animations/SplitText';
+import GradientText from '../components/animations/GradientText';
+import ShinyText from '../components/animations/ShinyText';
+import Magnet from '../components/animations/Magnet';
+import ScrollReveal from '../components/animations/ScrollReveal';
 import './LandingPage.css';
 
 // Lazy-loaded 3D scene — not loaded on initial render so Three.js doesn't block
 const LazyScene3D = React.lazy(() => import('./LazyScene3D'));
 
-// ── Animation variants ─────────────────────────────────────────────────────────
+// ── Hero container variants (minimal, used only for logo stagger) ──────────────
 
-const containerVariants = {
+const heroContainerVariants = {
   hidden: { opacity: 0 },
   visible: {
     opacity: 1,
@@ -17,7 +22,7 @@ const containerVariants = {
   },
 };
 
-const fadeInUp = {
+const heroFadeInUp = {
   hidden: { opacity: 0, y: 16 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.45, ease: 'easeOut' as const } },
 };
@@ -75,25 +80,6 @@ const HIGHLIGHTS = [
   { number: '24/7', label: 'Data accessible from any device' },
 ];
 
-// ── Section wrapper with scroll animation ──────────────────────────────────────
-
-function Section({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const inView = useInView(ref, { once: true, margin: '-80px' });
-
-  return (
-    <motion.div
-      ref={ref}
-      className={className}
-      variants={containerVariants}
-      initial="hidden"
-      animate={inView ? 'visible' : 'hidden'}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
 // ── Top Navigation Bar ─────────────────────────────────────────────────────────
 
 function LandingNavbar() {
@@ -129,7 +115,7 @@ function LandingNavbar() {
           className="btn btn-primary btn-sm"
           onClick={() => navigate('/login')}
         >
-          Sign Up
+          <ShinyText shineColor="rgba(255,255,255,0.3)">Sign Up</ShinyText>
         </button>
       </div>
     </nav>
@@ -165,11 +151,11 @@ export default function LandingPage() {
 
         {/* Content — minimal stagger, grouped instead of per-element */}
         <motion.div
-          variants={containerVariants}
+          variants={heroContainerVariants}
           initial="hidden"
           animate="visible"
         >
-          <motion.div className="landing-hero-logo" variants={fadeInUp}>
+          <motion.div className="landing-hero-logo" variants={heroFadeInUp}>
             <div className="landing-hero-logo-glow" />
             <motion.div
               animate={{ y: [0, -6, 0] }}
@@ -179,38 +165,43 @@ export default function LandingPage() {
             </motion.div>
           </motion.div>
 
-          <motion.h1 variants={fadeInUp}>
-            Your Business.
-            <br />
-            In Perfect Ledger.
-          </motion.h1>
+          <SplitText
+            text="Your Business. In Perfect Ledger."
+            as="h1"
+            delay={0.2}
+            duration={0.5}
+            animation="slide"
+            stagger={0.03}
+          />
 
-          <motion.p className="tagline" variants={fadeInUp}>
-            Radafiq is a beautiful financial ledger app for tracking customer credit,
-            EMI plans, savings, and account dues — all in one place with a stunning,
-            modern experience.
+          <motion.p className="tagline" variants={heroFadeInUp}>
+            <GradientText colors={['#5B7FFF', '#2DD4A0', '#A78BFA']} duration={5}>
+              Radafiq is a beautiful financial ledger app for tracking customer credit,
+              EMI plans, savings, and account dues — all in one place with a stunning,
+              modern experience.
+            </GradientText>
           </motion.p>
 
-          <motion.div className="landing-hero-actions" variants={fadeInUp}>
-            <motion.button
-              className="btn btn-primary btn-lg"
-              onClick={() => navigate('/login')}
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.97 }}
-            >
-              Get Started Free
-            </motion.button>
-            <motion.button
-              className="btn btn-ghost btn-lg"
-              onClick={() => {
-                document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' });
-              }}
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.97 }}
-              style={{ border: '1px solid var(--outline)' }}
-            >
-              Explore Features
-            </motion.button>
+          <motion.div className="landing-hero-actions" variants={heroFadeInUp}>
+            <Magnet strength={10}>
+              <button
+                className="btn btn-primary btn-lg"
+                onClick={() => navigate('/login')}
+              >
+                Get Started Free
+              </button>
+            </Magnet>
+            <Magnet strength={8}>
+              <button
+                className="btn btn-ghost btn-lg"
+                onClick={() => {
+                  document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' });
+                }}
+                style={{ border: '1px solid var(--outline)' }}
+              >
+                Explore Features
+              </button>
+            </Magnet>
           </motion.div>
         </motion.div>
 
@@ -228,79 +219,76 @@ export default function LandingPage() {
       </div>
 
       {/* ── Features ─────────────────────────────────────────────── */}
-      <Section>
+      <ScrollReveal>
         <div className="landing-section" id="features">
           <div className="landing-section-header">
-            <motion.h2 variants={fadeInUp}>Everything you need to manage finances</motion.h2>
-            <motion.p variants={fadeInUp}>
+            <h2>Everything you need to manage finances</h2>
+            <p>
               From customer ledgers to EMI schedules, Radafiq brings all your financial tools
               into one seamless experience.
-            </motion.p>
+            </p>
           </div>
 
-          <motion.div
-            className="feature-grid"
-            variants={containerVariants}
-          >
+          <div className="feature-grid">
             {FEATURES.map((feature) => (
-              <motion.div
-                key={feature.title}
-                className="feature-card"
-                variants={fadeInUp}
-                whileHover={{ y: -6 }}
-                transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-              >
+              <ScrollReveal key={feature.title} direction="up" distance={30}>
                 <div
-                  className="feature-card-icon"
-                  style={{
-                    background: `color-mix(in srgb, ${feature.color} 15%, transparent)`,
-                    color: feature.color,
-                  }}
+                  className="feature-card"
+                  style={{ cursor: 'default' }}
                 >
-                  {feature.icon}
+                  <div
+                    className="feature-card-icon"
+                    style={{
+                      background: `color-mix(in srgb, ${feature.color} 15%, transparent)`,
+                      color: feature.color,
+                    }}
+                  >
+                    {feature.icon}
+                  </div>
+                  <h3>{feature.title}</h3>
+                  <p>{feature.desc}</p>
+                  <div className="feature-tags">
+                    {feature.tags.map(tag => (
+                      <span key={tag} className="feature-tag">{tag}</span>
+                    ))}
+                  </div>
                 </div>
-                <h3>{feature.title}</h3>
-                <p>{feature.desc}</p>
-                <div className="feature-tags">
-                  {feature.tags.map(tag => (
-                    <span key={tag} className="feature-tag">{tag}</span>
-                  ))}
-                </div>
-              </motion.div>
+              </ScrollReveal>
             ))}
-          </motion.div>
+          </div>
         </div>
-      </Section>
+      </ScrollReveal>
 
       {/* ── Highlights ───────────────────────────────────────────── */}
-      <Section>
+      <ScrollReveal>
         <div className="landing-section">
           <div className="landing-section-header">
-            <motion.h2 variants={fadeInUp}>Built for Indian finance management</motion.h2>
-            <motion.p variants={fadeInUp}>
+            <h2>Built for Indian finance management</h2>
+            <p>
               Designed specifically for small business owners, shopkeepers, and anyone managing
               customer credit and installments in India.
-            </motion.p>
+            </p>
           </div>
 
-          <motion.div className="highlight-row" variants={containerVariants}>
+          <div className="highlight-row">
             {HIGHLIGHTS.map(h => (
-              <motion.div key={h.label} className="highlight-item" variants={fadeInUp}>
-                <div className="number">{h.number}</div>
-                <div className="label">{h.label}</div>
-              </motion.div>
+              <ScrollReveal key={h.label} direction="up" distance={20}>
+                <div className="highlight-item">
+                  <div className="number">{h.number}</div>
+                  <div className="label">{h.label}</div>
+                </div>
+              </ScrollReveal>
             ))}
-          </motion.div>
+          </div>
 
           {/* Feature bullets */}
-          <motion.div
+          <div
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
               gap: '1rem',
               marginTop: '3rem',
             }}
-            variants={containerVariants}
           >
             {[
               'Support for 50+ Indian banks and credit cards',
@@ -312,47 +300,47 @@ export default function LandingPage() {
               'Customer-wise savings and deposits',
               'Export statements as PDF',
             ].map(item => (
-              <motion.div
-                key={item}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.75rem',
-                  padding: '0.75rem 1rem',
-                  borderRadius: 10,
-                  background: 'var(--surface)',
-                  border: '1px solid var(--outline)',
-                  fontSize: '0.9rem',
-                }}
-                variants={fadeInUp}
-              >
-                <span style={{ color: 'var(--green)' }}>✓</span>
-                {item}
-              </motion.div>
+              <ScrollReveal key={item} direction="up" distance={20} delay={0.05}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.75rem',
+                    padding: '0.75rem 1rem',
+                    borderRadius: 10,
+                    background: 'var(--surface)',
+                    border: '1px solid var(--outline)',
+                    fontSize: '0.9rem',
+                  }}
+                >
+                  <span style={{ color: 'var(--green)' }}>✓</span>
+                  {item}
+                </div>
+              </ScrollReveal>
             ))}
-          </motion.div>
+          </div>
         </div>
-      </Section>
+      </ScrollReveal>
 
       {/* ── CTA ──────────────────────────────────────────────────── */}
       <div className="landing-cta">
-        <Section>
-          <motion.h2 variants={fadeInUp}>Ready to take control of your finances?</motion.h2>
-          <motion.p variants={fadeInUp}>
+        <ScrollReveal direction="up" distance={30}>
+          <h2>Ready to take control of your finances?</h2>
+          <p>
             Join Radafiq today and manage your customer ledger, accounts, and EMIs
             with a beautiful, modern interface.
-          </motion.p>
-          <motion.div variants={fadeInUp}>
-            <motion.button
-              className="btn btn-primary btn-lg"
-              onClick={() => navigate('/login')}
-              whileHover={{ scale: 1.04 }}
-              whileTap={{ scale: 0.96 }}
-            >
-              Get Started Free
-            </motion.button>
-          </motion.div>
-        </Section>
+          </p>
+          <div>
+            <Magnet strength={12}>
+              <button
+                className="btn btn-primary btn-lg"
+                onClick={() => navigate('/login')}
+              >
+                Get Started Free
+              </button>
+            </Magnet>
+          </div>
+        </ScrollReveal>
       </div>
 
       {/* ── Footer ────────────────────────────────────────────────── */}
