@@ -41,3 +41,17 @@ open-design/
 *.keystore
 # Exception: shared debug keystore for consistent SHA-1 across machines
 !app/radafiq-debug.jks
+
+# Node dependencies & build output
+node_modules/
+web-app/dist/
+web-app/.firebase/
+
+# Claude Code session artifacts
+findings.json
+skills-lock.json
+temp.kt
+
+# Accidental diff dumps (malformed path prefix from a diff tool)
+*diff_*.txt
+*full_diff.txt
