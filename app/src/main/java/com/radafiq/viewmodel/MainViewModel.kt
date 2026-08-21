@@ -128,7 +128,15 @@ internal fun computeAggregates(
                 }
             } else {
                 val due = if (t.isSettled) 0.0 else (t.amount - t.partialPaidAmount).coerceAtLeast(0.0)
-                if (due > 0.0) emiMap[t.accountId] = (emiMap[t.accountId] ?: 0.0) + due
+                if (due > 0.0) {
+                    // Visible installments are payable now → Current Due (nonEmiMap)
+                    // Future installments are still in the pipeline → EMI Outstanding (emiMap)
+                    if (t.isVisibleInTransactions()) {
+                        nonEmiMap[t.accountId] = (nonEmiMap[t.accountId] ?: 0.0) + due
+                    } else {
+                        emiMap[t.accountId] = (emiMap[t.accountId] ?: 0.0) + due
+                    }
+                }
             }
         }
     }

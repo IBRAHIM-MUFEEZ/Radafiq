@@ -1,9 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { formatMoney, formatDate } from '../utils/format';
 import { isVisibleInTransactions } from '../types/models';
 import AnimatedMoney from '../components/AnimatedMoney';
 import SpotlightCard from '../components/animations/SpotlightCard';
@@ -59,18 +58,9 @@ const AccountCustomerRow = React.memo(function AccountCustomerRow({ customer, us
 export default function AccountDetail() {
   const { accountId } = useParams<{ accountId: string }>();
   const navigate = useNavigate();
-  const { cards, customers, updateCreditCardDue, addPayment } = useApp();
+  const { cards, customers } = useApp();
 
   const card = cards.find(c => c.id === accountId);
-  const [showDueEditor, setShowDueEditor] = useState(false);
-  const [showPaymentEditor, setShowPaymentEditor] = useState(false);
-  const [dueAmount, setDueAmount] = useState('');
-  const [dueDate, setDueDate] = useState('');
-  const [remindersEnabled, setRemindersEnabled] = useState(false);
-  const [reminderEmail, setReminderEmail] = useState('');
-  const [reminderWhatsApp, setReminderWhatsApp] = useState('');
-  const [paymentAmount, setPaymentAmount] = useState('');
-
   const accountCustomers = useMemo(() => {
     if (!accountId) return [];
     return customers.flatMap(customer => {
@@ -94,17 +84,6 @@ export default function AccountDetail() {
   }
 
   const accentColor = card.accountKind === 'credit_card' ? 'var(--warning)' : 'var(--secondary)';
-  const remainingDue = card.dueAmount - card.pending;
-  const progress = card.dueAmount > 0 ? Math.min(1, card.pending / card.dueAmount) : 0;
-
-  const openDueEditor = () => {
-    setDueAmount(card.dueAmount > 0 ? String(card.dueAmount) : '');
-    setDueDate(card.dueDate);
-    setRemindersEnabled(card.remindersEnabled);
-    setReminderEmail(card.reminderEmail);
-    setReminderWhatsApp(card.reminderWhatsApp);
-    setShowDueEditor(true);
-  };
 
   return (
     <motion.div
@@ -147,50 +126,6 @@ export default function AccountDetail() {
           <span className="accent-value" style={{ color: accentColor }}><AnimatedMoney value={card.payable} /></span>
         </div>
 
-        {card.accountKind === 'credit_card' && (
-          <>
-            <div className="divider" />
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <div>
-                <div className="font-semibold text-sm">Credit Card Due</div>
-                <div className="text-muted text-xs">{card.dueDate ? `Due ${card.dueDate}` : 'No due date set'}</div>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn-sm btn-outline" onClick={() => { setPaymentAmount(''); setShowPaymentEditor(true); }}>
-                  Add Payment
-                </button>
-                <button className="btn btn-sm btn-outline" onClick={openDueEditor}>
-                  Edit Due
-                </button>
-              </div>
-            </div>
-
-            {card.dueAmount > 0 && (
-              <>
-                <div className="two-col" style={{ marginBottom: '0.75rem' }}>
-                  <div className="metric-pill">
-                    <span className="label">Due Amount</span>
-                    <span className="value" style={{ color: remainingDue > 0 ? 'var(--warning)' : 'var(--green)' }}><AnimatedMoney value={card.dueAmount} /></span>
-                  </div>
-                  <div className="metric-pill">
-                    <span className="label">Remaining</span>
-                    <span className="value" style={{ color: remainingDue > 0 ? 'var(--warning)' : 'var(--green)' }}><AnimatedMoney value={Math.abs(remainingDue)} /></span>
-                  </div>
-                </div>
-                <div className="progress-bar" style={{ marginBottom: 8 }}>
-                  <div className="progress-fill" style={{ width: `${progress * 100}%`, background: remainingDue > 0 ? 'var(--warning)' : 'var(--green)' }} />
-                </div>
-                <p className="text-sm" style={{ color: remainingDue > 0 ? 'var(--warning)' : 'var(--green)', fontWeight: 600 }}>
-                  {remainingDue > 0
-                    ? `You still need to pay ${formatMoney(remainingDue)} on this credit card.`
-                    : remainingDue < 0
-                    ? `You have overpaid ${formatMoney(Math.abs(remainingDue))} on this credit card.`
-                    : 'This credit card due is fully covered.'}
-                </p>
-              </>
-            )}
-          </>
-        )}
       </motion.div>
       </SpotlightCard>
 
@@ -210,85 +145,6 @@ export default function AccountDetail() {
         </>
       )}
 
-      {/* Edit Due Modal */}
-      {showDueEditor && (
-        <div className="modal-overlay" onClick={() => setShowDueEditor(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3 className="modal-title">Edit {card.name} Due</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-              <div className="form-group">
-                <label className="form-label">Credit Card Due Amount</label>
-                <input className="form-input" type="number" value={dueAmount} onChange={e => setDueAmount(e.target.value)} placeholder="0.00" />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Due Date (YYYY-MM-DD)</label>
-                <input className="form-input" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
-              </div>
-              <div className="toggle-row">
-                <div className="toggle-info">
-                  <div className="toggle-title">Daily due reminders</div>
-                  <div className="toggle-subtitle">One reminder per day from 5 days before the due date.</div>
-                </div>
-                <label className="switch">
-                  <input type="checkbox" checked={remindersEnabled} onChange={e => setRemindersEnabled(e.target.checked)} />
-                  <span className="switch-track" />
-                </label>
-              </div>
-              {remindersEnabled && (
-                <>
-                  <div className="form-group">
-                    <label className="form-label">Reminder Email</label>
-                    <input className="form-input" type="email" value={reminderEmail} onChange={e => setReminderEmail(e.target.value)} placeholder="email@example.com" />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">WhatsApp Number</label>
-                    <input className="form-input" type="tel" value={reminderWhatsApp} onChange={e => setReminderWhatsApp(e.target.value)} placeholder="+91..." />
-                  </div>
-                </>
-              )}
-            </div>
-            <div className="modal-actions">
-              <button className="btn btn-outline" onClick={() => setShowDueEditor(false)}>Cancel</button>
-              <button
-                className="btn btn-primary"
-                onClick={async () => {
-                  await updateCreditCardDue({ accountId: card.id, accountName: card.name, amount: dueAmount, dueDate, remindersEnabled, reminderEmail, reminderWhatsApp });
-                  setShowDueEditor(false);
-                }}
-                disabled={dueAmount === '' || !dueDate}
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add Payment Modal */}
-      {showPaymentEditor && (
-        <div className="modal-overlay" onClick={() => setShowPaymentEditor(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3 className="modal-title">Add Payment to {card.name}</h3>
-            <div className="form-group" style={{ marginBottom: '1rem' }}>
-              <label className="form-label">Payment Amount</label>
-              <input className="form-input" type="number" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} placeholder="0.00" autoFocus />
-            </div>
-            <div className="modal-actions">
-              <button className="btn btn-outline" onClick={() => setShowPaymentEditor(false)}>Cancel</button>
-              <button
-                className="btn btn-primary"
-                onClick={async () => {
-                  await addPayment(card.id, card.name, card.accountKind, paymentAmount);
-                  setShowPaymentEditor(false);
-                }}
-                disabled={!paymentAmount || parseFloat(paymentAmount) <= 0}
-              >
-                Add Payment
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </motion.div>
   );
 }

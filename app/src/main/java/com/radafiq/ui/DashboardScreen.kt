@@ -520,10 +520,17 @@ fun HomeScreen(
             }
         } else {
             items(activityCards.sortedByDescending { it.payable }.take(6), key = { it.id }) { card ->
+                val isCreditCard = card.accountKind == AccountKind.CREDIT_CARD
+                // For credit cards: show customer receivables (payable) as "Customer Due"
+                // For bank accounts: show non-EMI due (what customer owes)
+                val customerDue = if (isCreditCard) card.payable else (customerAgg.nonEmiDueByAccount[card.id] ?: 0.0)
+                val emiOutstanding = customerAgg.emiOutstandingByAccount[card.id] ?: 0.0
                 HomeActivityCard(
                     card = card,
-                    currentDue = customerAgg.nonEmiDueByAccount[card.id] ?: 0.0,
-                    emiOutstanding = customerAgg.emiOutstandingByAccount[card.id] ?: 0.0
+                    currentDue = customerDue,
+                    emiOutstanding = emiOutstanding,
+                    isCreditCard = isCreditCard,
+                    cardDueAmount = if (isCreditCard) card.dueAmount else 0.0
                 )
             }
             // FIX-20: Show "Show all" link when list is truncated
@@ -705,7 +712,13 @@ private fun HomeGreetingHeader(
 }
 
 @Composable
-private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOutstanding: Double = 0.0) {
+private fun HomeActivityCard(
+    card: CardSummary,
+    currentDue: Double = 0.0,
+    emiOutstanding: Double = 0.0,
+    isCreditCard: Boolean = false,
+    cardDueAmount: Double = 0.0
+) {
     val isOutgoing = card.accountKind == AccountKind.CREDIT_CARD
     val accentColor = if (isOutgoing) warningColor() else MaterialTheme.colorScheme.secondary
     val supportingText = buildString {
@@ -757,11 +770,11 @@ private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOut
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    // Credit card: show current due (non-EMI) + EMI outstanding (all EMIs)
+                    // Credit card: show Customer Due (what customers owe) + EMI outstanding + Card Due (if set)
                     if (isOutgoing) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            // Current Due pill — non-EMI unpaid transactions only
+                            // Customer Due pill — what customers owe on this card (non-EMI unpaid)
                             Column(
                                 modifier = Modifier
                                     .weight(1f)
@@ -770,7 +783,7 @@ private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOut
                                     .padding(horizontal = 10.dp, vertical = 6.dp)
                             ) {
                                 Text(
-                                    text = "CURRENT DUE",
+                                    text = "CUSTOMER DUE",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = FontWeight.Bold
@@ -808,11 +821,36 @@ private fun HomeActivityCard(card: CardSummary, currentDue: Double = 0.0, emiOut
                                 }
                             }
                         }
+                        // Card Due pill — actual credit card bill due (from account document)
+                        if (cardDueAmount > 0.0) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = "CARD DUE",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                AnimatedMoney(
+                                    value = cardDueAmount,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            // Bank account: show single amount on the right
+            // Bank account: show single amount on the right (customer payable)
             if (!isOutgoing) {
                 AnimatedMoney(
                     value = card.payable,

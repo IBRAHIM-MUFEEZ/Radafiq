@@ -1,0 +1,120 @@
+{
+  "pbtResults": {
+    "1. Write bug condition exploration test": {
+      "status": "passed",
+      "failingExample": "Counterexample confirmed on unfixed code:\nTransaction: { emiGroupId: 'group-1', isSettled: false, amount: 5000, partialPaidAmount: 0, dueDate: dateOffset(-30), accountKind: 'credit_card', accountId: 'acc-1' }\nisVisibleInTransactions(t) === true ✓ (sanity check passed)\nnonEmiDueByAccount.get('acc-1') → undefined  (expected 5000)\nemiOutstandingByAccount.get('acc-1') → 5000  (should be undefined)\nFailure: AssertionError: expected undefined to be 5000 — visible EMI installment (dueDate -30d, ₹5000) ends up in emiOutstandingByAccount instead of nonEmiDueByAccount",
+      "lastRunTimestamp": 1787289844768
+    }
+  },
+  "executionHistory": {
+    "1. Write bug condition exploration test": [
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787289577682
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787289586500
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787289866533
+      }
+    ],
+    "2. Write preservation property tests (BEFORE implementing fix)": [
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787289578288
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787289872510
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787289992893
+      }
+    ],
+    "3.1 Implement the fix in `web-app/src/pages/Dashboard.tsx`": [
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787289578348
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787289997962
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787290137907
+      }
+    ],
+    "3.2 Verify bug condition exploration test now passes": [
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787289578401
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787290143306
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787290186876
+      }
+    ],
+    "3.3 Verify preservation tests still pass": [
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787289578443
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787290192519
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787290197984
+      }
+    ],
+    "4. Checkpoint — Ensure all tests pass": [
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787289578486
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787290202301
+      },
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787290257247
+      }
+    ],
+    "3. Fix — split EMI branch on `isVisibleInTransactions` and hoist `today`": [
+      {
+        "executionId": "8eedb361-3f85-4f88-a484-6122be4911e8",
+        "chatSessionId": "sess_e2deae26-2990-41ef-b79c-f8485b79e6a4",
+        "timestamp": 1787290198030
+      }
+    ]
+  }
+}

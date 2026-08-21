@@ -4,12 +4,49 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { TrendingUp, TrendingDown, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatMoney, getGreeting } from '../utils/format';
-import { CardSummary, isVisibleInTransactions, isScheduledForFutureMonth } from '../types/models';
+import { CardSummary, CustomerSummary, isVisibleInTransactions, isScheduledForFutureMonth } from '../types/models';
 import AnimatedAvatar from '../components/AnimatedAvatar';
 import AnimatedMoney from '../components/AnimatedMoney';
 import SpotlightCard from '../components/animations/SpotlightCard';
 import BlurText from '../components/animations/BlurText';
 import ScrollReveal from '../components/animations/ScrollReveal';
+
+// ── Pure helper — extracted from the useMemo so tests can call it directly ────
+/**
+ * Computes two per-account maps from a flat customer list:
+ *   - emiOutstandingByAccount: future (not-yet-visible) unsettled EMI amounts
+ *   - nonEmiDueByAccount: current-due amounts (visible EMI + regular non-EMI)
+ *
+ * Exported for unit and property-based testing without a React render.
+ */
+export function computeEmiDueMaps(
+  customers: CustomerSummary[],
+  today: Date = new Date(),
+): { emiOutstandingByAccount: Map<string, number>; nonEmiDueByAccount: Map<string, number> } {
+  const emiMap    = new Map<string, number>();
+  const nonEmiMap = new Map<string, number>();
+  customers.forEach(customer => {
+    customer.transactions.forEach(t => {
+      if (t.accountKind === 'person') return;
+      const due = t.isSettled ? 0 : Math.max(0, t.amount - t.partialPaidAmount);
+      if (due <= 0) return;
+      if (t.emiGroupId) {
+        // Visible installments are payable now → Current Due
+        // Future installments are still in the pipeline → EMI Outstanding
+        if (isVisibleInTransactions(t, today)) {
+          nonEmiMap.set(t.accountId, (nonEmiMap.get(t.accountId) ?? 0) + due);
+        } else {
+          emiMap.set(t.accountId, (emiMap.get(t.accountId) ?? 0) + due);
+        }
+      } else {
+        if (!isScheduledForFutureMonth(t, today)) {
+          nonEmiMap.set(t.accountId, (nonEmiMap.get(t.accountId) ?? 0) + due);
+        }
+      }
+    });
+  });
+  return { emiOutstandingByAccount: emiMap, nonEmiDueByAccount: nonEmiMap };
+}
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -209,15 +246,21 @@ export default function Dashboard() {
   const { emiOutstandingByAccount, nonEmiDueByAccount } = useMemo(() => {
     const emiMap    = new Map<string, number>();
     const nonEmiMap = new Map<string, number>();
+    const today     = new Date();                        // hoisted — computed once
     customers.forEach(customer => {
       customer.transactions.forEach(t => {
         if (t.accountKind === 'person') return;
         const due = t.isSettled ? 0 : Math.max(0, t.amount - t.partialPaidAmount);
         if (due <= 0) return;
         if (t.emiGroupId) {
-          emiMap.set(t.accountId, (emiMap.get(t.accountId) ?? 0) + due);
+          // Visible installments are payable now → Current Due
+          // Future installments are still in the pipeline → EMI Outstanding
+          if (isVisibleInTransactions(t, today)) {
+            nonEmiMap.set(t.accountId, (nonEmiMap.get(t.accountId) ?? 0) + due);
+          } else {
+            emiMap.set(t.accountId, (emiMap.get(t.accountId) ?? 0) + due);
+          }
         } else {
-          const today = new Date();
           if (!isScheduledForFutureMonth(t, today)) {
             nonEmiMap.set(t.accountId, (nonEmiMap.get(t.accountId) ?? 0) + due);
           }
